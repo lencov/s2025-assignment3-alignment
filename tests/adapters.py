@@ -9,6 +9,7 @@ from torch.utils.data import Dataset
 from transformers import PreTrainedTokenizerBase
 
 from cs336_alignment.parsing_utils import parse_mmlu_response
+from cs336_alignment.parsing_utils import parse_gsm8k_response
 
 
 def get_packed_sft_dataset(
@@ -104,7 +105,7 @@ def run_parse_gsm8k_response(
         str with the predicted numeric answer if the model output can be parsed into a prediction,
         else None.
     """
-    raise NotImplementedError
+    return parse_gsm8k_response(model_output=model_output)
 
 
 def compute_per_instance_dpo_loss(
