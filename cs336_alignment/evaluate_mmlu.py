@@ -12,7 +12,7 @@ from vllm import LLM, SamplingParams
 from cs336_alignment.parsing_utils import parse_mmlu_response
 
 # Define prompt templates (adjust paths if necessary)
-ZERO_SHOT_SYSTEM_PROMPT_FILE = Path("cs336_alignment/prompts/zero_shot_system_prompt.txt")
+ZERO_SHOT_SYSTEM_PROMPT_FILE = Path("cs336_alignment/prompts/zero_shot_system_prompt.prompt")
 
 # MMLU specific prompt - adjust if structure differs slightly
 MMLU_PROMPT_TEMPLATE = \
@@ -180,7 +180,7 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Evaluate Zero-Shot MMLU Performance")
-    parser.add_argument("--model_path", type=str, default="../Qwen/Qwen2.5-0.5B", # Adjust default based on your setup
+    parser.add_argument("--model_path", type=str, default="../../../Qwen/Qwen2.5-0.5B", # Adjust default based on your setup
                         help="Path to the HuggingFace model directory (downloaded locally).")
     parser.add_argument("--mmlu_dataset_name", type=str, default="cais/mmlu",
                         help="Name of the MMLU dataset on Hugging Face Hub or path to local data.")
