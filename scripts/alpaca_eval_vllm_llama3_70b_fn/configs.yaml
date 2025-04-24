@@ -7,7 +7,7 @@ alpaca_eval_vllm_llama3_70b_fn:
       tokenizer_mode: "auto"
       trust_remote_code: True
       max_model_len: 1000
-      tp: 2
+      tp: 1
     max_new_tokens: 100
     temperature: 0.0
     top_p: 1.0
