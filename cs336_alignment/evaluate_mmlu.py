@@ -77,7 +77,13 @@ def main(args):
     print(f"Initializing vLLM with model: {args.model_path}")
     try:
         # Adjust tensor_parallel_size based on available GPUs
-        llm = LLM(model=args.model_path, trust_remote_code=True, tensor_parallel_size=args.tensor_parallel_size)
+        # Explicitly set dtype to float16 ('half' for vLLM) for T4 compatibility
+        llm = LLM(
+            model=args.model_path, 
+            trust_remote_code=True, 
+            tensor_parallel_size=args.tensor_parallel_size,
+            dtype='half' 
+        )
         print("vLLM initialized successfully.")
     except Exception as e:
         print(f"Error initializing vLLM: {e}")

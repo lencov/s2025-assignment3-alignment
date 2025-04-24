@@ -24,7 +24,6 @@ C. {options[2]}
 D. {options[3]}
 Answer:"""
 
-# SFT Chat Template (Ensure this matches the template used during training)
 SFT_CHAT_TEMPLATE = "<|im_start|>user\n{instruction}<|im_end|>\n<|im_start|>assistant\n"
 
 def format_mmlu_sft_prompt(example: dict) -> str:
