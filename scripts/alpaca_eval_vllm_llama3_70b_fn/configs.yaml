@@ -6,7 +6,7 @@ alpaca_eval_vllm_llama3_70b_fn:
     model_kwargs:
       tokenizer_mode: "auto"
       trust_remote_code: True
-      max_model_len: 1000
+      max_model_len: 4096
       tp: 1
     max_new_tokens: 100
     temperature: 0.0
