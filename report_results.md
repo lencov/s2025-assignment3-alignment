@@ -114,3 +114,26 @@ The training run completed successfully after 500 optimizer steps.
 **Conclusion:**
 
 The SFT fine-tuning process was successfully executed on the `Qwen/Qwen2.5-0.5B` model within the constrained environment. The model demonstrated learning, as evidenced by the reduction in both training and validation loss. While the final validation loss of 1.8426 reflects the very limited training duration, the process yielded a functional SFT model. The trained model and tokenizer were saved to `./output/qwen-0.5b-sft-short` and are ready for use in the subsequent parts of the assignment.
+
+## Section 5: Evaluating the SFT Model
+
+Now that we've instruction-tuned our model, we will evaluate it on each of the previously-used benchmarks
+and try to get a sense of how its performance and behavior might have changed. For fair comparison against
+our zero-shot baseline, we'll use the same prompts and generation settings for all of the benchmarks,
+**making sure to use the SFT prompt format** where applicable (as specified in Problem 5.1).
+
+### 5.1 MMLU SFT Evaluation
+
+Following the SFT process, the fine-tuned model (`./output/qwen-0.5b-sft-short`) was evaluated on the MMLU test set using the same methodology as the baseline evaluation, with the crucial difference being that the prompts were formatted using the instruction-tuning chat template (`<|im_start|>user...`) that the model was trained on, as required by the assignment.
+
+**(a) Throughput:**
+
+Generating responses for the 14,042 MMLU examples took 283.67 seconds. This resulted in a throughput of approximately **49.50 examples/second**, which is slightly lower than the zero-shot baseline throughput of ~52.63 examples/second observed previously.
+
+**(b) Performance:**
+
+Parsing the SFT model's outputs for the required "The correct answer is [A/B/C/D]" format failed for **13,949 out of 14,042 examples (99.34%)**. On the mere 93 examples where parsing succeeded, the accuracy was 35.48%. Due to the extremely high parsing failure rate, this accuracy is unreliable, and a direct performance comparison to the zero-shot baseline accuracy (33.65% on 14,037 parsable examples) is not meaningful using this parsing method.
+
+**(c) Error Analysis & Qualitative Comparison:**
+
+The primary reason for the massive parsing failure was not subtle formatting deviations, but rather the SFT model fundamentally failing to adhere to the specific output format instruction ("Respond with a single sentence...") when it was embedded within the chat template. Instead of generating the requested sentence, the model consistently echoed the beginning of the user prompt (e.g., `"Answer the following multiple choice question..."`) and stopped, as seen in the example outputs. This contrasts sharply with the zero-shot baseline model, which, using a different prompt structure, largely followed the formatting instruction. This suggests that the SFT process, particularly the short duration, did not sufficiently train the model to prioritize specific formatting instructions within the learned chat interaction style for this task. A standard error analysis focused on incorrect answer choices (A/B/C/D) is precluded by the widespread failure to generate outputs in the required format.
