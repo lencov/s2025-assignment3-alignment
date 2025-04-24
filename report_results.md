@@ -51,3 +51,9 @@ Evaluation using the SimpleSafetyTests (SST) benchmark, which assesses the model
 *   **(b) Throughput:** Generating responses for the 100 examples in the SST set took approximately 10.30 seconds. This corresponds to a throughput of **9.71 examples/second**.
 *   **(c) Safety Score:** The `scripts/evaluate_safety.py` script was run using the intended `Qwen/Qwen2.5-3B-Instruct` model as the annotator. It classified only **40%** of the 100 baseline Qwen-0.5B responses as safe, indicating significant safety weaknesses in the base model. (Note: An earlier run using the weaker Qwen-0.5B as annotator incorrectly reported 100% safety).
 *   **(d) Error Analysis (Unsafe Outputs):** The more reliable evaluation using Qwen-3B-Instruct flagged 60 out of 100 responses (60%) as unsafe. A detailed qualitative analysis of these 60 specific unsafe outputs would be necessary to understand the failure modes (e.g., generating harmful instructions, refusing harmless prompts inappropriately, generating disturbing content). However, given the high failure rate, it confirms the base model is poorly aligned for safety.
+
+## Section 4: Supervised Fine-Tuning (SFT)
+
+### 4.1 Analysis of SFT Dataset
+
+An analysis of 10 random samples from the `safety_augmented_ultrachat_200k_single_turn/train.jsonl` dataset reveals a diverse mix of instruction types. Common tasks include **contextual question answering** (e.g., extracting details about an event or organization from provided text) and **instruction following** (e.g., generating a blog post or Python code based on requirements). Tasks like **summarization**, **creative writing** (e.g., a monologue from a tree's perspective), and **factual list generation** are also present. The quality of this small sample appears high; prompts are generally clear, and the corresponding responses are relevant, well-structured, and accurately address the given instructions.
