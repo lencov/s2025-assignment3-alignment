@@ -57,3 +57,60 @@ Evaluation using the SimpleSafetyTests (SST) benchmark, which assesses the model
 ### 4.1 Analysis of SFT Dataset
 
 An analysis of 10 random samples from the `safety_augmented_ultrachat_200k_single_turn/train.jsonl` dataset reveals a diverse mix of instruction types. Common tasks include **contextual question answering** (e.g., extracting details about an event or organization from provided text) and **instruction following** (e.g., generating a blog post or Python code based on requirements). Tasks like **summarization**, **creative writing** (e.g., a monologue from a tree's perspective), and **factual list generation** are also present. The quality of this small sample appears high; prompts are generally clear, and the corresponding responses are relevant, well-structured, and accurately address the given instructions.
+
+### 4.2 Instruction Tuning Results (Problem sft)
+
+**Objective:** The goal of this problem was to fine-tune a pre-trained language model on the provided instruction-following dataset (`safety_augmented_ultrachat_200k_single_turn`). The fine-tuned model (SFT model) would then be saved for use in subsequent parts of the assignment.
+
+**Deviations from Original Problem Description:**
+
+Due to computational resource constraints (access to a Colab T4 GPU instead of the suggested H100 cluster) and time limitations (aiming for a demonstration run of approximately 2.5 hours instead of the suggested 24 H100 hours or a full epoch), several modifications were made:
+
+1.  **Model:** Instead of the Llama 3 8B base model, the significantly smaller `Qwen/Qwen2.5-0.5B` model was used.
+2.  **Training Duration:** The model was trained for a fixed **500 optimizer steps**, which is substantially less than a full epoch on the dataset, to fit within the available time and demonstrate the fine-tuning process.
+3.  **Precision:** Initial attempts using `float16` precision encountered errors related to `torch.amp.GradScaler` in the specific environment (PyTorch 2.6.0+cu124). To resolve this and ensure the run completed, the training was performed using **`float32` precision**.
+
+**Training Setup:**
+
+The fine-tuning was performed using the `scripts/train_sft.py` script with the following configuration:
+
+*   **Model:** `Qwen/Qwen2.5-0.5B` (loaded from Hugging Face Hub)
+*   **Dataset:**
+    *   Training: `data/sft/train.jsonl` (210,348 examples)
+    *   Validation: `data/sft/test.jsonl` (23,110 examples)
+*   **Key Hyperparameters:**
+    *   Context Length (`--seq_length`): 512
+    *   Batch Size per Device (`--batch_size`): 1
+    *   Gradient Accumulation Steps (`--gradient_accumulation_steps`): 32
+    *   **Total Effective Batch Size:** 32 (1 * 32 * 1 GPU)
+    *   Total Optimizer Steps (`--train_steps`): 500
+    *   Learning Rate (`--learning_rate`): 2e-5
+    *   LR Scheduler: Cosine decay with warmup
+    *   Warmup Ratio (`--warmup_ratio`): 0.03 (15 steps)
+    *   Weight Decay (`--weight_decay`): 0.01
+    *   Gradient Clipping (`--grad_clip`): 1.0
+    *   Optimizer: AdamW (Defaults: beta1=0.9, beta2=0.95, eps=1e-8)
+*   **Hardware & Precision:**
+    *   GPU: Tesla T4 (via Colab)
+    *   Precision (`--dtype`): `float32`
+*   **Evaluation:** Performed every 100 steps (`--eval_interval`) using 50 batches (`--eval_iters`).
+*   **Output:** Model and tokenizer saved to `./output/qwen-0.5b-sft-short`.
+*   **Logging:** Tracked using Weights & Biases (offline mode). Run ID: `offline-run-20250424_121302-5t3vkjfa`. *(Note: Based on user logs, may differ)*
+
+**Results:**
+
+The training run completed successfully after 500 optimizer steps.
+
+*   **Final Validation Loss:** The final estimated validation loss, calculated over 100 batches (`eval_iters * 2`) after training completion, was **1.8426**.
+*   **Learning Curve:** The learning curve, observable in the WandB logs, showed the expected behavior for a short fine-tuning run.
+    *   The *training loss* decreased from its initial value, ending around 1.4281, indicating the model was learning from the training data.
+    *   The *validation loss*, measured periodically during training, also showed a generally decreasing trend (from an initial high, down to ~1.76 near the end), suggesting the model was generalizing.
+    *   The limited number of training steps (500) meant the model was far from full convergence, explaining why the loss reduction wasn't more substantial. The slight increase between the last periodic validation loss (1.7663) and the final validation loss (1.8426) might indicate the very beginning of overfitting or simply variance in the evaluation batches.
+
+# Placeholder for WandB Learning Curve Image/Link
+# Example: ![Learning Curve](path/to/your/wandb_curve.png)
+# Or: See WandB run: https://wandb.ai/<your_entity>/<your_project>/runs/<run_id>
+
+**Conclusion:**
+
+The SFT fine-tuning process was successfully executed on the `Qwen/Qwen2.5-0.5B` model within the constrained environment. The model demonstrated learning, as evidenced by the reduction in both training and validation loss. While the final validation loss of 1.8426 reflects the very limited training duration, the process yielded a functional SFT model. The trained model and tokenizer were saved to `./output/qwen-0.5b-sft-short` and are ready for use in the subsequent parts of the assignment.
