@@ -20,7 +20,7 @@ ALPACA_TEMPLATE = (
 class PackedSFTDataset(Dataset):
     """
     Dataset for supervised fine-tuning (SFT) that packs multiple examples
-    into fixed-length sequences.
+    into fixed-length sequences. Correctly handles labels across chunk boundaries.
     """
     def __init__(self, tokenizer: PreTrainedTokenizer, dataset_path: str, seq_length: int = 2048, shuffle: bool = True):
         """
@@ -42,12 +42,12 @@ class PackedSFTDataset(Dataset):
                  raise ValueError("Tokenizer must have either eos_token_id or pad_token_id defined.")
 
         logging.info(f"Loading and processing dataset from: {dataset_path}")
-        tokenized_chunks = self._load_and_process_data(dataset_path)
-        self.tokenized_chunks = tokenized_chunks
-        logging.info(f"Dataset initialized with {len(self.tokenized_chunks)} sequences of length {self.seq_length}.")
+        # Store the processed chunks directly
+        self.input_chunks, self.label_chunks = self._load_and_process_data(dataset_path)
+        logging.info(f"Dataset initialized with {len(self.input_chunks)} sequences of length {self.seq_length}.")
 
-    def _load_and_process_data(self, dataset_path: str) -> list[list[int]]:
-        """Loads data, formats, tokenizes, concatenates, and chunks it."""
+    def _load_and_process_data(self, dataset_path: str) -> tuple[list[list[int]], list[list[int]]]:
+        """Loads data, formats, tokenizes, concatenates, creates shifted labels, and chunks."""
         all_examples = []
         try:
             with open(dataset_path, 'r', encoding='utf-8') as f:
@@ -93,78 +93,67 @@ class PackedSFTDataset(Dataset):
                 prompt=example['prompt'],
                 response=example['response']
             )
-            # Removed manual concatenation of EOS token string.
-            # Let the tokenizer handle special tokens with add_special_tokens=True.
-            # It's generally better to let the tokenizer handle adding BOS/EOS if configured.
-            # If not, you might need manual addition, but ensure it aligns with model expectations.
-            token_ids = self.tokenizer.encode(formatted_text, add_special_tokens=True) # Keep True
-            # Manually add EOS if tokenizer doesn't and it's needed for packing.
-            # Example: if token_ids[-1] != self.eos_token_id: token_ids.append(self.eos_token_id)
+            # Tokenize *without* special tokens initially, add EOS manually as separator
+            token_ids = self.tokenizer.encode(formatted_text, add_special_tokens=False)
+            token_ids.append(self.eos_token_id) # Add EOS delimiter between documents
             all_token_ids.extend(token_ids)
-            # Add EOS between documents *if* tokenizer doesn't handle it automatically
-            # This ensures separation when packing. Let's assume add_special_tokens=True handles it.
-            # If packing requires an explicit separator different from EOS, add it here.
-            # all_token_ids.append(self.eos_token_id) # Example explicit addition
-
 
         logging.info(f"Total number of tokens after concatenation: {len(all_token_ids)}")
 
-        # Chunk the concatenated tokens
-        num_tokens = len(all_token_ids)
-        # Adjust sequence length for labels (input needs one more token than labels predict)
-        # We are packing into seq_length, so input and label tensors will be seq_length.
-        # We drop the last chunk if it's smaller than seq_length
-        num_sequences = num_tokens // self.seq_length
+        # Ensure we have enough tokens for at least one sequence + label
+        if len(all_token_ids) <= self.seq_length:
+             logging.warning("Not enough tokens to form a single sequence.")
+             return [], []
+
+        # Create input IDs and labels *before* chunking
+        # Input sequence: t1, t2, ..., tN-1
+        # Label sequence: t2, t3, ..., tN
+        # The total length for chunking is N-1
+        input_sequence = all_token_ids[:-1]
+        label_sequence = all_token_ids[1:]
+
+        # Chunk the input and label sequences
+        num_tokens_for_chunking = len(input_sequence) # Both sequences have the same length N-1
+        num_sequences = num_tokens_for_chunking // self.seq_length
         logging.info(f"Chunking into {num_sequences} sequences of length {self.seq_length}.")
 
-        tokenized_chunks = []
+        input_chunks = []
+        label_chunks = []
         for i in range(num_sequences):
             start_idx = i * self.seq_length
             end_idx = start_idx + self.seq_length
-            chunk = all_token_ids[start_idx:end_idx]
-            if len(chunk) == self.seq_length: # Ensure chunk is exactly seq_length
-                tokenized_chunks.append(chunk)
-            else:
-                logging.warning(f"Skipping chunk {i} due to incorrect length {len(chunk)}.") # Should not happen with // logic
+            input_chunks.append(input_sequence[start_idx:end_idx])
+            label_chunks.append(label_sequence[start_idx:end_idx])
 
-        # Report discarded tokens
-        discarded_tokens = num_tokens % self.seq_length
+        # Report discarded tokens (from the end of the N-1 sequence)
+        discarded_tokens = num_tokens_for_chunking % self.seq_length
         if discarded_tokens > 0:
-            logging.info(f"Discarded {discarded_tokens} tokens from the end of the dataset.")
+            logging.info(f"Discarded {discarded_tokens} tokens from the end of the input/label sequences.")
 
-        return tokenized_chunks
+        # Sanity check chunk lengths
+        assert all(len(chunk) == self.seq_length for chunk in input_chunks), "Input chunk length mismatch"
+        assert all(len(chunk) == self.seq_length for chunk in label_chunks), "Label chunk length mismatch"
+        assert len(input_chunks) == len(label_chunks), "Input/Label chunk count mismatch"
+
+        return input_chunks, label_chunks
 
     def __len__(self) -> int:
         """Returns the number of fixed-length sequences in the dataset."""
-        return len(self.tokenized_chunks)
+        return len(self.input_chunks)
 
     def __getitem__(self, i: int) -> dict[str, torch.Tensor]:
         """
-        Returns the i-th sequence chunk as input_ids and labels.
-        Labels are input_ids shifted left by one position.
+        Returns the i-th pre-processed sequence chunk for input_ids and labels.
         """
-        if i >= len(self.tokenized_chunks):
+        if i >= len(self.input_chunks):
             raise IndexError(f"Index {i} out of bounds for dataset with length {len(self)}")
 
-        token_ids = self.tokenized_chunks[i]
-        input_ids_tensor = torch.tensor(token_ids, dtype=torch.long)
-
-        # Create labels by shifting input_ids left.
-        # labels[i] = input_ids[i+1]
-        # The label for the last token is typically ignored during loss calculation.
-        # We'll use -100 (common ignore_index for CrossEntropyLoss) for the last label.
-        labels_tensor = torch.cat((input_ids_tensor[1:], torch.tensor([-100], dtype=torch.long)), dim=0)
-
-        # --- Alternative (if test expects masking instead of shifting in dataset): ---
-        # labels_tensor = input_ids_tensor.clone()
-        # Find prompt boundary and set labels for prompt tokens to -100
-        # This requires more complex logic to track prompt/response boundaries during tokenization.
-        # Given the test error, explicit shifting seems required by the test fixture.
-        # --------------------------------------------------------------------------
+        input_ids = self.input_chunks[i]
+        labels = self.label_chunks[i]
 
         return {
-            "input_ids": input_ids_tensor,
-            "labels": labels_tensor, # Use the shifted labels
+            "input_ids": torch.tensor(input_ids, dtype=torch.long),
+            "labels": torch.tensor(labels, dtype=torch.long),
         }
 
 # Renamed function and implemented manual batching
