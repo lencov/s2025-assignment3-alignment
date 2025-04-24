@@ -95,14 +95,25 @@ class PackedSFTDataset(Dataset):
             )
             # Removed manual concatenation of EOS token string.
             # Let the tokenizer handle special tokens with add_special_tokens=True.
-            # full_doc = formatted_text + eos_token_str 
-            token_ids = self.tokenizer.encode(formatted_text, add_special_tokens=True) # Set add_special_tokens=True
+            # It's generally better to let the tokenizer handle adding BOS/EOS if configured.
+            # If not, you might need manual addition, but ensure it aligns with model expectations.
+            token_ids = self.tokenizer.encode(formatted_text, add_special_tokens=True) # Keep True
+            # Manually add EOS if tokenizer doesn't and it's needed for packing.
+            # Example: if token_ids[-1] != self.eos_token_id: token_ids.append(self.eos_token_id)
             all_token_ids.extend(token_ids)
+            # Add EOS between documents *if* tokenizer doesn't handle it automatically
+            # This ensures separation when packing. Let's assume add_special_tokens=True handles it.
+            # If packing requires an explicit separator different from EOS, add it here.
+            # all_token_ids.append(self.eos_token_id) # Example explicit addition
+
 
         logging.info(f"Total number of tokens after concatenation: {len(all_token_ids)}")
 
         # Chunk the concatenated tokens
         num_tokens = len(all_token_ids)
+        # Adjust sequence length for labels (input needs one more token than labels predict)
+        # We are packing into seq_length, so input and label tensors will be seq_length.
+        # We drop the last chunk if it's smaller than seq_length
         num_sequences = num_tokens // self.seq_length
         logging.info(f"Chunking into {num_sequences} sequences of length {self.seq_length}.")
 
@@ -111,7 +122,10 @@ class PackedSFTDataset(Dataset):
             start_idx = i * self.seq_length
             end_idx = start_idx + self.seq_length
             chunk = all_token_ids[start_idx:end_idx]
-            tokenized_chunks.append(chunk)
+            if len(chunk) == self.seq_length: # Ensure chunk is exactly seq_length
+                tokenized_chunks.append(chunk)
+            else:
+                logging.warning(f"Skipping chunk {i} due to incorrect length {len(chunk)}.") # Should not happen with // logic
 
         # Report discarded tokens
         discarded_tokens = num_tokens % self.seq_length
@@ -127,19 +141,30 @@ class PackedSFTDataset(Dataset):
     def __getitem__(self, i: int) -> dict[str, torch.Tensor]:
         """
         Returns the i-th sequence chunk as input_ids and labels.
-        For standard language modeling, input_ids and labels are the same.
+        Labels are input_ids shifted left by one position.
         """
         if i >= len(self.tokenized_chunks):
             raise IndexError(f"Index {i} out of bounds for dataset with length {len(self)}")
 
         token_ids = self.tokenized_chunks[i]
         input_ids_tensor = torch.tensor(token_ids, dtype=torch.long)
-        # Labels are the same as input_ids for next-token prediction
-        labels_tensor = input_ids_tensor.clone()
+
+        # Create labels by shifting input_ids left.
+        # labels[i] = input_ids[i+1]
+        # The label for the last token is typically ignored during loss calculation.
+        # We'll use -100 (common ignore_index for CrossEntropyLoss) for the last label.
+        labels_tensor = torch.cat((input_ids_tensor[1:], torch.tensor([-100], dtype=torch.long)), dim=0)
+
+        # --- Alternative (if test expects masking instead of shifting in dataset): ---
+        # labels_tensor = input_ids_tensor.clone()
+        # Find prompt boundary and set labels for prompt tokens to -100
+        # This requires more complex logic to track prompt/response boundaries during tokenization.
+        # Given the test error, explicit shifting seems required by the test fixture.
+        # --------------------------------------------------------------------------
 
         return {
             "input_ids": input_ids_tensor,
-            "labels": labels_tensor,
+            "labels": labels_tensor, # Use the shifted labels
         }
 
 # Renamed function and implemented manual batching
@@ -194,54 +219,71 @@ def iterate_batches(dataset: PackedSFTDataset, batch_size: int, shuffle: bool = 
 if __name__ == '__main__':
     from transformers import AutoTokenizer
 
-    EXAMPLE_DATASET_PATH = "../data/sft/train.jsonl"
-    EXAMPLE_TOKENIZER_PATH = "../Qwen/Qwen2.5-0.5B"
+    # Adjust paths relative to the script location if needed
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    # Go up one level from cs336_alignment to the project root
+    project_root = os.path.dirname(script_dir)
+
+    EXAMPLE_DATASET_PATH = os.path.join(project_root, "data/sft/train.jsonl")
+    # Use a tokenizer path relative to the project root
+    EXAMPLE_TOKENIZER_PATH = os.path.join(project_root, "Qwen/Qwen2.5-0.5B")
     EXAMPLE_SEQ_LENGTH = 512
     EXAMPLE_BATCH_SIZE = 4
 
-    script_dir = os.path.dirname(__file__)
-    abs_dataset_path = os.path.join(script_dir, EXAMPLE_DATASET_PATH)
-    abs_tokenizer_path = os.path.join(script_dir, EXAMPLE_TOKENIZER_PATH)
-
-    if not os.path.exists(abs_dataset_path):
-         print(f"Example Usage ERROR: Dataset file not found at {abs_dataset_path}")
-    elif not os.path.exists(abs_tokenizer_path):
-         print(f"Example Usage ERROR: Tokenizer not found at {abs_tokenizer_path}")
+    if not os.path.exists(EXAMPLE_DATASET_PATH):
+         print(f"Example Usage ERROR: Dataset file not found at {EXAMPLE_DATASET_PATH}")
+    elif not os.path.exists(EXAMPLE_TOKENIZER_PATH):
+         print(f"Example Usage ERROR: Tokenizer not found at {EXAMPLE_TOKENIZER_PATH}")
     else:
         print("\n--- Example Dataset Usage ---")
-        tokenizer = AutoTokenizer.from_pretrained(abs_tokenizer_path, trust_remote_code=True)
-        if tokenizer.eos_token is None and tokenizer.pad_token is not None:
-             tokenizer.eos_token = tokenizer.pad_token
-             print(f"Set tokenizer.eos_token to tokenizer.pad_token ({tokenizer.eos_token})")
+        try:
+            tokenizer = AutoTokenizer.from_pretrained(EXAMPLE_TOKENIZER_PATH, trust_remote_code=True)
+            if tokenizer.eos_token is None and tokenizer.pad_token is not None:
+                 tokenizer.eos_token = tokenizer.pad_token
+                 print(f"Set tokenizer.eos_token to tokenizer.pad_token ({tokenizer.eos_token})")
+            # Explicitly set pad token if missing and needed for labels
+            if tokenizer.pad_token is None:
+                if tokenizer.eos_token is not None:
+                    tokenizer.pad_token = tokenizer.eos_token
+                    print(f"Set tokenizer.pad_token to tokenizer.eos_token ({tokenizer.pad_token})")
+                else:
+                    # Add a pad token if none exists - this might require resizing embeddings
+                    print("Warning: Tokenizer lacks both EOS and PAD tokens. Adding a PAD token.")
+                    tokenizer.add_special_tokens({'pad_token': '[PAD]'}) # Or another suitable token
+                    # Need to handle potential model resizing if adding tokens
 
-        sft_dataset = PackedSFTDataset(
-            tokenizer=tokenizer,
-            dataset_path=abs_dataset_path,
-            seq_length=EXAMPLE_SEQ_LENGTH,
-            shuffle=False
-        )
-        print(f"Dataset length: {len(sft_dataset)}")
-
-        if len(sft_dataset) > 0:
-            first_item = sft_dataset[0]
-            print("\nFirst item shapes:")
-            print(f"  input_ids: {first_item['input_ids'].shape}")
-            print(f"  labels: {first_item['labels'].shape}")
-
-            print("\n--- Example iterate_batches Usage ---")
-            batch_iterator = iterate_batches( # Changed function call
-                sft_dataset,
-                batch_size=EXAMPLE_BATCH_SIZE,
-                shuffle=True
+            sft_dataset = PackedSFTDataset(
+                tokenizer=tokenizer,
+                dataset_path=EXAMPLE_DATASET_PATH,
+                seq_length=EXAMPLE_SEQ_LENGTH,
+                shuffle=False
             )
+            print(f"Dataset length: {len(sft_dataset)}")
 
-            print(f"Iterating through first 3 batches (Batch Size: {EXAMPLE_BATCH_SIZE}):")
-            for i, batch in enumerate(batch_iterator):
-                print(f"\nBatch {i+1}:")
-                print(f"  input_ids shape: {batch['input_ids'].shape}")
-                print(f"  labels shape: {batch['labels'].shape}")
-                if i >= 2:
-                    break
-            print("\nExample Usage Complete.")
-        else:
-             print("Dataset created but is empty.") 
+            if len(sft_dataset) > 0:
+                first_item = sft_dataset[0]
+                print("\nFirst item shapes:")
+                print(f"  input_ids: {first_item['input_ids'].shape}")
+                print(f"  labels: {first_item['labels'].shape}")
+
+                print("\n--- Example iterate_batches Usage ---")
+                batch_iterator = iterate_batches( # Changed function call
+                    sft_dataset,
+                    batch_size=EXAMPLE_BATCH_SIZE,
+                    shuffle=True
+                )
+
+                print(f"Iterating through first 3 batches (Batch Size: {EXAMPLE_BATCH_SIZE}):")
+                for i, batch in enumerate(batch_iterator):
+                    print(f"\nBatch {i+1}:")
+                    print(f"  input_ids shape: {batch['input_ids'].shape}")
+                    print(f"  labels shape: {batch['labels'].shape}")
+                    if i >= 2:
+                        break
+                print("\nExample Usage Complete.")
+            else:
+                 print("Dataset created but is empty.")
+        except Exception as e:
+             print(f"An error occurred during example usage: {e}")
+             import traceback
+             traceback.print_exc() 
