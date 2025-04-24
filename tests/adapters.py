@@ -65,13 +65,10 @@ def run_iterate_batches(
             If true, shuffle examples before batching them.
 
     Returns:
-        Iterable over batches, where each batch has size `batch_size`.
+        Iterable over batches, where each batch is a dictionary containing PyTorch tensors.
     """
     batch_generator = iterate_batches(dataset, batch_size, shuffle)
-    batches = []
-    for batch in batch_generator:
-        batch_list = {key: value.tolist() for key, value in batch.items()}
-        batches.append(batch_list)
+    batches = list(batch_generator)
     return batches
 
 
