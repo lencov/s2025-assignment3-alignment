@@ -226,7 +226,7 @@ def train(
         if device_type == "cpu"
         else torch.amp.autocast(device_type=device_type, dtype=torch_dtype)
     )
-    scaler = torch.cuda.amp.GradScaler(enabled=(dtype == "float16")) # Only needed for float16
+    scaler = torch.amp.GradScaler('cuda', enabled=(dtype == "float16")) # Use recommended constructor
 
     # --- Training Loop ---
     train_iterator = iter(iterate_batches(train_dataset, batch_size=batch_size, shuffle=True))
