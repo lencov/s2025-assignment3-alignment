@@ -93,9 +93,10 @@ class PackedSFTDataset(Dataset):
                 prompt=example['prompt'],
                 response=example['response']
             )
-            # Concatenate with EOS token *string* as delimiter between examples
-            full_doc = formatted_text + eos_token_str
-            token_ids = self.tokenizer.encode(full_doc, add_special_tokens=False)
+            # Removed manual concatenation of EOS token string.
+            # Let the tokenizer handle special tokens with add_special_tokens=True.
+            # full_doc = formatted_text + eos_token_str 
+            token_ids = self.tokenizer.encode(formatted_text, add_special_tokens=True) # Set add_special_tokens=True
             all_token_ids.extend(token_ids)
 
         logging.info(f"Total number of tokens after concatenation: {len(all_token_ids)}")
