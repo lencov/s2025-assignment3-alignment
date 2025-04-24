@@ -8,9 +8,9 @@ import torch
 from torch.utils.data import Dataset
 from transformers import PreTrainedTokenizerBase
 
-from cs336_alignment.parsing_utils import parse_mmlu_response
-from cs336_alignment.parsing_utils import parse_gsm8k_response
 
+from cs336_alignment.sft_dataset import PackedSFTDataset, get_batch_iterator
+from cs336_alignment.parsing_utils import parse_mmlu_response, parse_gsm8k_response
 
 def get_packed_sft_dataset(
     tokenizer: PreTrainedTokenizerBase,
@@ -39,7 +39,12 @@ def get_packed_sft_dataset(
         "input_ids" contains the token IDs for the language modeling inputs, and "labels" contains
         the token IDs for the language modeling labels.
     """
-    raise NotImplementedError
+    return PackedSFTDataset(
+        tokenizer=tokenizer,
+        dataset_path=str(dataset_path),
+        seq_length=seq_length,
+        shuffle=shuffle
+    )
 
 
 def run_iterate_batches(
@@ -62,7 +67,12 @@ def run_iterate_batches(
     Returns:
         Iterable over batches, where each batch has size `batch_size`.
     """
-    raise NotImplementedError
+    dataloader = get_batch_iterator(dataset, batch_size, shuffle)
+    batches = []
+    for batch in dataloader:
+        batch_list = {key: value.tolist() for key, value in batch.items()}
+        batches.append(batch_list)
+    return batches
 
 
 def run_parse_mmlu_response(
