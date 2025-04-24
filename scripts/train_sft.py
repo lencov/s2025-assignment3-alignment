@@ -62,10 +62,6 @@ from transformers.optimization import get_cosine_schedule_with_warmup # Using HF
 
 logger = logging.getLogger(__name__)
 
-# Add global variable setting for use in estimate_dev_loss
-# This is a simple way to pass the flag; consider alternatives for more complex scenarios
-IS_MASTER_PROCESS = False
-
 def train(
     model_name_or_path: str,
     train_dataset_path: str,
@@ -102,17 +98,11 @@ def train(
         torch.cuda.set_device(device)
         seed = 42 + ddp_rank # Ensure different seed per process
         is_master_process = ddp_rank == 0
-        # Add global variable setting for use in estimate_dev_loss
-        # This is a simple way to pass the flag; consider alternatives for more complex scenarios
-        global IS_MASTER_PROCESS 
-        IS_MASTER_PROCESS = is_master_process
         print(f"DDP Rank {ddp_rank}: Using device {device}, seed {seed}")
     else:
         seed = 42
         ddp_world_size = 1
         is_master_process = True
-        global IS_MASTER_PROCESS
-        IS_MASTER_PROCESS = is_master_process
         print(f"Single process: Using device {device}, seed {seed}")
 
     torch.manual_seed(seed)
@@ -316,7 +306,8 @@ def train(
                         eval_iters=eval_iters,
                         device=device,
                         amp_ctx=amp_ctx,
-                        ddp_world_size=ddp_world_size
+                        ddp_world_size=ddp_world_size,
+                        is_master_process_local=is_master_process # Pass flag as argument
                     )
                     logger.info(f"Step {completed_optimizer_steps}: Estimated validation loss: {eval_loss:.4f}")
                     if wandb_project:
@@ -344,7 +335,8 @@ def train(
              eval_iters=eval_iters * 2, # Use more iters for final estimate?
              device=device,
              amp_ctx=amp_ctx,
-             ddp_world_size=ddp_world_size
+             ddp_world_size=ddp_world_size,
+             is_master_process_local=is_master_process # Pass flag as argument
         )
         logger.info(f"Final estimated validation loss: {final_dev_loss:.4f}")
         if wandb_project:
@@ -380,13 +372,10 @@ def estimate_dev_loss(
     eval_iters: int,
     device: str,
     amp_ctx: torch.amp.autocast | nullcontext, # Pass context manager
-    ddp_world_size: int = 1 # For averaging loss across GPUs
+    ddp_world_size: int = 1, # For averaging loss across GPUs
+    is_master_process_local: bool = True # Add parameter with default for non-DDP
 ):
     """Estimates validation loss."""
-    # Access the global flag (ensure it's set before calling this function)
-    global IS_MASTER_PROCESS
-    is_master_process_local = IS_MASTER_PROCESS # Use a local variable for clarity
-
     if is_master_process_local:
         logger.info("Estimating validation loss...")
     # Ensure model is in eval mode
