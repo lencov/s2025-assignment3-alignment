@@ -9,7 +9,7 @@ from torch.utils.data import Dataset
 from transformers import PreTrainedTokenizerBase
 
 
-from cs336_alignment.sft_dataset import PackedSFTDataset, get_batch_iterator
+from cs336_alignment.sft_dataset import PackedSFTDataset, iterate_batches
 from cs336_alignment.parsing_utils import parse_mmlu_response, parse_gsm8k_response
 
 def get_packed_sft_dataset(
@@ -67,9 +67,9 @@ def run_iterate_batches(
     Returns:
         Iterable over batches, where each batch has size `batch_size`.
     """
-    dataloader = get_batch_iterator(dataset, batch_size, shuffle)
+    batch_generator = iterate_batches(dataset, batch_size, shuffle)
     batches = []
-    for batch in dataloader:
+    for batch in batch_generator:
         batch_list = {key: value.tolist() for key, value in batch.items()}
         batches.append(batch_list)
     return batches
