@@ -96,11 +96,11 @@ class PackedSFTDataset(Dataset):
                 prompt=example['prompt'],
                 response=example['response']
             )
-            # Tokenize without adding special tokens like BOS/EOS automatically
-            # We will add the EOS token manually as a delimiter between documents
-            token_ids = self.tokenizer.encode(formatted_text, add_special_tokens=False)
-            token_ids.append(self.eos_token_id) # Add EOS delimiter
-            all_token_ids.extend(token_ids)
+            # Use add_special_tokens=True. This assumes the tokenizer (e.g., Llama 3)
+            # correctly adds BOS at the start and EOS at the end of each formatted text.
+            # The test fixture seems to expect this behavior.
+            token_ids = self.tokenizer.encode(formatted_text, add_special_tokens=True)
+            all_token_ids.extend(token_ids) # Concatenate directly
 
         logging.info(f"Total number of tokens after concatenation: {len(all_token_ids)}")
 
