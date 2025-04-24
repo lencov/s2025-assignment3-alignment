@@ -1,21 +1,44 @@
-# Assignment 3 Report - Results Summary
+# Assignment 3 Report - Detailed Results Summary
 
-## Section 3: Measuring Zero-Shot Performance
+## Section 3: Measuring Zero-Shot Performance using Qwen2.5-0.5B
 
-### 3.2 Zero-shot MMLU baseline (Qwen2.5-0.5B)
+This section details the baseline performance of the pre-trained Qwen2.5-0.5B model on various benchmarks without any task-specific fine-tuning.
 
-*   **(c) Parsing Failures:** 5 out of 14,042 model generations failed parsing (0.04%).
-    *   Examples:
-        *   `The correct answer is I only``` (Missing space after 'is') - Occurred 3 times.
-        *   `Answer:``` (Model failed to generate the required sentence format).
-        *   `The primary impact of "Humanism ceasing to be the exclusive privilege of the few" was that it led to a broader and more inclusive understanding of the classics...` (Model generated a descriptive answer instead of the requested format and likely ran out of tokens).
-*   **(d) Throughput:** Generation throughput was approximately **51.93 examples/second**.
-*   **(e) Performance:** The zero-shot baseline achieved an accuracy of **33.65%** on the MMLU test set (calculated on 14,037 parsable examples).
-*   **(f) Error Analysis:** Analysis of 10 random incorrect predictions revealed diverse error types. Frequent issues included **factual inaccuracies** across multiple domains (e.g., history, biology, psychology, math) and **misinterpretation or reasoning errors** based on provided text passages. There was also evidence of **calculation errors** in quantitative problems and occasional **output formatting issues** where the model repeated itself or failed to adhere strictly to the prompt format even when producing a parsable letter.
+### 3.2 Zero-shot MMLU baseline
 
-### 3.3 Zero-shot GSM8K baseline (Qwen2.5-0.5B)
+Evaluation of the model on the Massive Multitask Language Understanding (MMLU) benchmark, which tests knowledge across diverse subjects using multiple-choice questions.
 
-*   **(c) Parsing Failures:** 0 out of 1,319 model generations failed parsing (0.00%).
-*   **(d) Throughput:** Generation throughput was approximately **21.00 examples/second**.
-*   **(e) Performance:** The zero-shot baseline achieved an accuracy of **22.02%** on the GSM8K test set (calculated on 1,317 examples where both prediction and ground truth could be parsed).
-*   **(f) Error Analysis:** Analysis of incorrect predictions revealed frequent **reasoning and logic errors**. The model struggled with multi-step problems, often making mistakes in intermediate calculations, using incorrect numbers, or misinterpreting the relationships described. **Arithmetic errors** (e.g., using addition instead of subtraction) were also common, particularly in the final step. Several examples showed **incomplete outputs**, where the model was cut off mid-calculation. One instance involved **hallucination**, where the correct answer was followed by unrelated text, leading to incorrect parsing. 
+*   **(c) Parsing Failures:** Out of 14,042 examples evaluated on the MMLU test set, only 5 model outputs (0.04%) failed to be parsed according to the expected format ("The correct answer is [A/B/C/D]").
+    *   Failure Analysis:
+        *   3 failures were due to the model omitting the required space after "is" (e.g., `The correct answer isI only```).
+        *   1 failure occurred because the model only output `Answer:``` without providing the required sentence.
+        *   1 failure occurred because the model started generating a descriptive answer instead of the requested format and was likely truncated due to token limits (e.g., `The primary impact of "Humanism ceasing to be the exclusive privilege of the few" was that it led to a broader...`).
+*   **(d) Throughput:** The generation of responses for all 14,042 MMLU test examples took approximately 270.40 seconds using vLLM on the available hardware (T4 GPU in Colab). This translates to a throughput of approximately **51.93 examples/second**.
+*   **(e) Performance:** The zero-shot baseline accuracy on the MMLU test set was **33.65%**. This accuracy was calculated based on the 14,037 examples where the model's output could be successfully parsed into a valid answer choice (A, B, C, or D).
+*   **(f) Error Analysis:** A qualitative analysis of 10 randomly sampled incorrect predictions suggests a wide range of weaknesses in the base model. Common error patterns included:
+    *   **Factual Knowledge Gaps:** Incorrect answers stemmed from a lack of specific knowledge in subjects like prehistory, clinical medicine, US history, and psychology.
+    *   **Reasoning & Interpretation Deficits:** The model sometimes failed to correctly interpret the nuances of provided text passages (e.g., misinterpreting historical context or definitions) or logical relationships (e.g., in formal logic or biology questions).
+    *   **Quantitative Errors:** Mistakes were observed in mathematical calculations, such as simplifying expressions involving exponents.
+    *   **Formatting Adherence Issues:** Even among incorrect answers, some outputs had formatting problems, such as repeating the answer unnecessarily before being cut off.
+
+### 3.3 Zero-shot GSM8K baseline
+
+Evaluation on the Grade School Math 8K (GSM8K) benchmark, focusing on multi-step mathematical reasoning problems.
+
+*   **(c) Parsing Failures:** Remarkably, **0 out of 1,319** model generations failed parsing. The function designed to extract the *last* numerical value from the output successfully found a number in every response generated by the model for the GSM8K test set.
+*   **(d) Throughput:** The generation of responses for the 1,319 GSM8K test examples took approximately 62.81 seconds. This results in a throughput of approximately **21.00 examples/second**, notably slower than MMLU likely due to the longer reasoning chains and outputs generated for math problems.
+*   **(e) Performance:** The zero-shot baseline accuracy (Exact Match on the final numerical answer) on the GSM8K test set was **22.02%**. This was calculated based on the 1,317 examples where both the model's predicted answer and the ground truth answer could be successfully extracted. (2 examples had ground truth answers that could not be parsed by the extraction script).
+*   **(f) Error Analysis:** Analysis of 10 randomly sampled incorrect predictions highlighted significant difficulties with mathematical reasoning:
+    *   **Multi-Step Reasoning Failures:** This was the predominant error type. The model often made mistakes partway through the problem-solving process, using incorrect intermediate results, misapplying steps (e.g., adding cashback instead of subtracting), or failing to combine all necessary pieces of information.
+    *   **Operational Errors:** Basic arithmetic mistakes (e.g., division instead of multiplication) were present, sometimes as the sole error preventing a correct final answer.
+    *   **Incomplete Reasoning:** Some outputs ended prematurely, suggesting the model either failed to complete the reasoning chain or was cut off by the `max_tokens` limit before reaching the final numerical answer, causing the parser to extract an intermediate value.
+    *   **Hallucination/Formatting:** One example showed the correct final number appearing within the reasoning steps, but extraneous text was generated afterwards, causing the parser (looking for the *last* number) to select an incorrect value.
+
+### 3.4 Zero-shot AlpacaEval baseline
+
+Evaluation using the AlpacaEval benchmark, which assesses model performance on general instruction-following tasks, judged by a stronger LLM.
+
+*   **(a) Script:** The script `cs336_alignment/evaluate_alpaca.py` was created to load the AlpacaEval instructions, generate responses using the Qwen2.5-0.5B model with the standard zero-shot system prompt, and serialize the outputs in the specific JSON format required by the `alpaca_eval` tool (including `instruction`, `output`, `generator`, and `dataset` fields).
+*   **(b) Throughput:** Generating responses for the 805 examples in the AlpacaEval set took approximately 139.68 seconds. This corresponds to a throughput of **5.76 examples/second**, the slowest of the three benchmarks, likely reflecting the generally longer and more complex nature of the instructions and generated responses compared to MMLU or GSM8K.
+*   **(c) Win Rate:** The attempt to evaluate the generated outputs using `alpaca_eval` with Qwen2.5-3B-Instruct configured as the annotator **failed**. The Qwen2.5-3B-Instruct model, when prompted by `alpaca_eval`'s internal templates to provide a pairwise preference judgment, produced outputs that were largely unparsable (containing repeated garbage tokens like "ием" or failing syntax checks). Warnings indicated that annotations could not be automatically determined for hundreds of examples, and the final results table showed `n_total: 1`, meaning only a single valid comparison was successfully processed. Consequently, the reported win rates (50.0% raw, 27.0% length-controlled) are statistically meaningless and cannot be used.
+*   **(d) Error Analysis:** Due to the failure of the automated annotation process described in part (c), a meaningful error analysis comparing the baseline model's outputs against the reference (GPT-4 Turbo) based on the annotator's preferences could not be performed. The annotation file generated by the failed run does not contain reliable preference judgments. 
