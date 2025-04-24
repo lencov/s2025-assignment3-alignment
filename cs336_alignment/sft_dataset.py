@@ -97,7 +97,7 @@ class PackedSFTDataset(Dataset):
                 response=example['response']
             )
             # Tokenize *without* adding special tokens automatically
-            token_ids = self.tokenizer.encode(formatted_text, add_special_tokens=False)
+            token_ids = self.tokenizer.encode(formatted_text, add_special_tokens=True)
             # Manually append the EOS token ID as a delimiter between documents
             token_ids.append(self.eos_token_id) # self.eos_token_id should be 128001 for the test
             all_token_ids.extend(token_ids)
