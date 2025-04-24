@@ -185,7 +185,8 @@ def iterate_batches(dataset: PackedSFTDataset, batch_size: int, shuffle: bool = 
 
     Yields:
         A dictionary representing a batch, with keys like 'input_ids' and 'labels',
-        where values are stacked PyTorch tensors of shape (batch_size, seq_length).
+        where values are stacked PyTorch tensors of shape (current_batch_size, seq_length).
+        Note: The last batch might have a size smaller than batch_size.
     """
     indices = list(range(len(dataset)))
     if shuffle:
@@ -194,13 +195,8 @@ def iterate_batches(dataset: PackedSFTDataset, batch_size: int, shuffle: bool = 
     for i in range(0, len(indices), batch_size):
         batch_indices = indices[i : i + batch_size]
 
-        # Drop last batch if it's smaller than batch_size
-        # This is common practice to ensure consistent tensor shapes during training
-        if len(batch_indices) < batch_size and i > 0: # Check i > 0 to handle datasets smaller than batch_size
-             logging.debug(f"Skipping last batch with size {len(batch_indices)} (smaller than batch_size {batch_size}).")
-             continue
-        # Safety check for empty batch list
-        elif len(batch_indices) == 0:
+        # Safety check for empty batch list (shouldn't happen with range logic)
+        if len(batch_indices) == 0:
              continue
 
         # Collect data for the batch
@@ -208,16 +204,15 @@ def iterate_batches(dataset: PackedSFTDataset, batch_size: int, shuffle: bool = 
 
         # Collate the batch: Stack tensors for each key
         collated_batch = {}
-        if not batch_data: continue # Should not happen if checks above are correct
+        if not batch_data: continue # Should not happen
 
         keys = batch_data[0].keys() # Get keys from the first item ('input_ids', 'labels')
         for key in keys:
-            # Ensure all items in batch_data have the key (should be true)
+            # Ensure all items in batch_data have the key
             if all(key in item for item in batch_data):
                  # Stack tensors along a new batch dimension (dim=0)
                  collated_batch[key] = torch.stack([item[key] for item in batch_data], dim=0)
             else:
-                 # This case should ideally not occur with consistent __getitem__ output
                  logging.warning(f"Key '{key}' missing in some items of the batch, skipping collation for this key.")
 
         # Only yield if we successfully collated something
