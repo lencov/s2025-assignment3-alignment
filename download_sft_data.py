@@ -6,12 +6,18 @@ from tqdm import tqdm
 
 # --- Configuration ---
 SFT_TRAIN_URL = "https://nlp.stanford.edu/data/nfliu/cs336-spring-2024/assignment5/safety_augmented_ultrachat_200k_single_turn/train.jsonl.gz"
+SFT_TEST_URL = "https://nlp.stanford.edu/data/nfliu/cs336-spring-2024/assignment5/safety_augmented_ultrachat_200k_single_turn/test.jsonl.gz"
 TARGET_DIR = "data/sft"
-GZ_FILENAME = "train.jsonl.gz"
-JSONL_FILENAME = "train.jsonl"
 
-GZ_FILEPATH = os.path.join(TARGET_DIR, GZ_FILENAME)
-JSONL_FILEPATH = os.path.join(TARGET_DIR, JSONL_FILENAME)
+TRAIN_GZ_FILENAME = "train.jsonl.gz"
+TRAIN_JSONL_FILENAME = "train.jsonl"
+TEST_GZ_FILENAME = "test.jsonl.gz"
+TEST_JSONL_FILENAME = "test.jsonl"
+
+TRAIN_GZ_FILEPATH = os.path.join(TARGET_DIR, TRAIN_GZ_FILENAME)
+TRAIN_JSONL_FILEPATH = os.path.join(TARGET_DIR, TRAIN_JSONL_FILENAME)
+TEST_GZ_FILEPATH = os.path.join(TARGET_DIR, TEST_GZ_FILENAME)
+TEST_JSONL_FILEPATH = os.path.join(TARGET_DIR, TEST_JSONL_FILENAME)
 
 # --- Main Download and Unzip Logic ---
 def download_file(url, destination):
@@ -66,13 +72,26 @@ if __name__ == "__main__":
     # Ensure target directory exists
     os.makedirs(TARGET_DIR, exist_ok=True)
 
-    # Download the file
-    if download_file(SFT_TRAIN_URL, GZ_FILEPATH):
+    # --- Download and Unzip Training Data ---
+    print("--- Processing Training Data ---")
+    if download_file(SFT_TRAIN_URL, TRAIN_GZ_FILEPATH):
         # Unzip the file
-        unzip_gz_file(GZ_FILEPATH, JSONL_FILEPATH)
-        # Optional: Remove the .gz file after successful decompression
-        # try:
-        #     os.remove(GZ_FILEPATH)
-        #     print(f"Removed compressed file: {GZ_FILEPATH}")
-        # except OSError as e:
-        #     print(f"Error removing compressed file {GZ_FILEPATH}: {e}") 
+        if unzip_gz_file(TRAIN_GZ_FILEPATH, TRAIN_JSONL_FILEPATH):
+             # Optional: Remove the .gz file after successful decompression
+             try:
+                 os.remove(TRAIN_GZ_FILEPATH)
+                 print(f"Removed compressed file: {TRAIN_GZ_FILEPATH}")
+             except OSError as e:
+                 print(f"Error removing compressed file {TRAIN_GZ_FILEPATH}: {e}")
+
+    print("\n--- Processing Test Data ---")
+    # --- Download and Unzip Test Data ---
+    if download_file(SFT_TEST_URL, TEST_GZ_FILEPATH):
+        # Unzip the file
+        if unzip_gz_file(TEST_GZ_FILEPATH, TEST_JSONL_FILEPATH):
+             # Optional: Remove the .gz file after successful decompression
+             try:
+                 os.remove(TEST_GZ_FILEPATH)
+                 print(f"Removed compressed file: {TEST_GZ_FILEPATH}")
+             except OSError as e:
+                 print(f"Error removing compressed file {TEST_GZ_FILEPATH}: {e}") 
