@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import csv
 import json
 import os
 import time
@@ -23,15 +24,17 @@ def format_sst_prompt(system_prompt: str, instruction: str) -> str:
     else:
         return system_prompt.replace("{instruction}", instruction)
 
-def load_jsonl(file_path):
-    """Loads a JSON Lines file."""
+def load_csv_as_dict(file_path):
+    """Loads a CSV file into a list of dictionaries."""
     data = []
-    with open(file_path, 'r', encoding='utf-8') as f:
-        for line in f:
-            try:
-                data.append(json.loads(line.strip()))
-            except json.JSONDecodeError as e:
-                print(f"Skipping invalid JSON line: {line.strip()} - Error: {e}")
+    try:
+        with open(file_path, 'r', encoding='utf-8', newline='') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                data.append(row)
+    except Exception as e:
+        print(f"Error reading CSV file {file_path}: {e}")
+        return None # Return None or empty list on error
     return data
 
 def main(args):
@@ -49,20 +52,22 @@ def main(args):
         return
 
     # --- 2. Load SimpleSafetyTests Dataset ---
-    print(f"Loading SimpleSafetyTests dataset from: {args.dataset_path}")
+    print(f"Loading SimpleSafetyTests dataset from CSV: {args.dataset_path}")
     try:
-        # Assuming the dataset is JSONL and has a 'prompt' key for the instruction
-        sst_dataset = load_jsonl(args.dataset_path)
-        # Check if dataset is loaded and is a list
-        if not isinstance(sst_dataset, list) or not sst_dataset:
-             print(f"Error: Failed to load or empty dataset from {args.dataset_path}")
+        sst_dataset = load_csv_as_dict(args.dataset_path)
+        if sst_dataset is None:
+             print(f"Error: Failed to load dataset from {args.dataset_path}")
              return
-         # Verify expected key exists in the first item (assuming consistent structure)
+        if not sst_dataset:
+            print(f"Error: Dataset appears empty: {args.dataset_path}")
+            return
+
+         # Verify expected key (column name) exists in the first item
         if args.instruction_key not in sst_dataset[0]:
-             print(f"Error: Instruction key '{args.instruction_key}' not found in the first item of the dataset.")
-             print(f"Available keys: {list(sst_dataset[0].keys())}")
+             print(f"Error: Instruction key/column '{args.instruction_key}' not found in the CSV header.")
+             print(f"Available columns: {list(sst_dataset[0].keys())}")
              return
-        print(f"Loaded {len(sst_dataset)} examples from SimpleSafetyTests.")
+        print(f"Loaded {len(sst_dataset)} examples from SimpleSafetyTests CSV.")
     except FileNotFoundError:
         print(f"Error: Dataset file not found at {args.dataset_path}")
         return
@@ -139,13 +144,13 @@ def main(args):
     print(f"Throughput: {throughput:.2f} examples/second")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Generate SimpleSafetyTests Zero-Shot Outputs")
+    parser = argparse.ArgumentParser(description="Generate SimpleSafetyTests Zero-Shot Outputs from CSV")
     parser.add_argument("--model_path", type=str, default="/content/s2025-assignment3-alignment/Qwen/Qwen2.5-0.5B",
                         help="Path to the HuggingFace model directory.")
-    parser.add_argument("--dataset_path", type=str, default="data/simple_safety_tests.jsonl",
-                        help="Path to the SimpleSafetyTests JSONL file.")
+    parser.add_argument("--dataset_path", type=str, default="data/simple_safety_tests.csv",
+                        help="Path to the SimpleSafetyTests CSV file.")
     parser.add_argument("--instruction_key", type=str, default="prompt",
-                        help="Key in the JSONL file that contains the instruction/prompt.")
+                        help="Column name in the CSV file that contains the instruction/prompt.")
     parser.add_argument("--system_prompt_file", type=Path, default=ZERO_SHOT_SYSTEM_PROMPT_FILE,
                         help="Path to the file containing the zero-shot system prompt.")
     parser.add_argument("--output_file", type=str, default="sst_baseline_results.jsonl",
