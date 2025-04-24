@@ -141,4 +141,106 @@ class PackedSFTDataset(Dataset):
             "labels": labels_tensor,
         }
 
-# --- Remove batch iterator and example usage for now --- 
+# Renamed function and implemented manual batching
+def iterate_batches(dataset: PackedSFTDataset, batch_size: int, shuffle: bool = True):
+    """
+    Yields batches of data from the dataset.
+
+    Args:
+        dataset: The PackedSFTDataset instance.
+        batch_size: The number of sequences per batch.
+        shuffle: Whether to shuffle the sequences each epoch.
+
+    Yields:
+        A dictionary representing a batch, with keys like 'input_ids' and 'labels',
+        where values are stacked tensors.
+    """
+    indices = list(range(len(dataset)))
+    if shuffle:
+        random.shuffle(indices)
+
+    for i in range(0, len(indices), batch_size):
+        batch_indices = indices[i : i + batch_size]
+        # Skip last batch if it's smaller than batch_size (optional, could also pad)
+        if len(batch_indices) < batch_size and i > 0: # Ensure we don't skip if total size < batch_size
+             logging.info(f"Skipping last batch with size {len(batch_indices)} (smaller than batch_size {batch_size}).")
+             continue
+        elif len(batch_indices) == 0:
+             continue # Should not happen with range logic, but safety check
+
+        # Collect data for the batch
+        batch_data = [dataset[idx] for idx in batch_indices]
+
+        # Collate the batch: Stack tensors for each key
+        collated_batch = {}
+        if not batch_data: continue # Should not happen if checks above are correct
+
+        keys = batch_data[0].keys()
+        for key in keys:
+            # Ensure all items in batch_data have the key (should be true)
+            if all(key in item for item in batch_data):
+                 # Stack tensors along a new batch dimension (dim=0)
+                 collated_batch[key] = torch.stack([item[key] for item in batch_data], dim=0)
+            else:
+                 logging.warning(f"Key '{key}' missing in some items of the batch, skipping collation for this key.")
+
+        if collated_batch: # Only yield if we successfully collated something
+            yield collated_batch
+
+# --- Example Usage Update --- 
+# (Keep the example usage part if it was present, or add it back if needed for testing)
+# Ensure the example usage calls iterate_batches correctly.
+if __name__ == '__main__':
+    from transformers import AutoTokenizer
+
+    EXAMPLE_DATASET_PATH = "../data/sft/train.jsonl"
+    EXAMPLE_TOKENIZER_PATH = "../Qwen/Qwen2.5-0.5B"
+    EXAMPLE_SEQ_LENGTH = 512
+    EXAMPLE_BATCH_SIZE = 4
+
+    script_dir = os.path.dirname(__file__)
+    abs_dataset_path = os.path.join(script_dir, EXAMPLE_DATASET_PATH)
+    abs_tokenizer_path = os.path.join(script_dir, EXAMPLE_TOKENIZER_PATH)
+
+    if not os.path.exists(abs_dataset_path):
+         print(f"Example Usage ERROR: Dataset file not found at {abs_dataset_path}")
+    elif not os.path.exists(abs_tokenizer_path):
+         print(f"Example Usage ERROR: Tokenizer not found at {abs_tokenizer_path}")
+    else:
+        print("\n--- Example Dataset Usage ---")
+        tokenizer = AutoTokenizer.from_pretrained(abs_tokenizer_path, trust_remote_code=True)
+        if tokenizer.eos_token is None and tokenizer.pad_token is not None:
+             tokenizer.eos_token = tokenizer.pad_token
+             print(f"Set tokenizer.eos_token to tokenizer.pad_token ({tokenizer.eos_token})")
+
+        sft_dataset = PackedSFTDataset(
+            tokenizer=tokenizer,
+            dataset_path=abs_dataset_path,
+            seq_length=EXAMPLE_SEQ_LENGTH,
+            shuffle=False
+        )
+        print(f"Dataset length: {len(sft_dataset)}")
+
+        if len(sft_dataset) > 0:
+            first_item = sft_dataset[0]
+            print("\nFirst item shapes:")
+            print(f"  input_ids: {first_item['input_ids'].shape}")
+            print(f"  labels: {first_item['labels'].shape}")
+
+            print("\n--- Example iterate_batches Usage ---")
+            batch_iterator = iterate_batches( # Changed function call
+                sft_dataset,
+                batch_size=EXAMPLE_BATCH_SIZE,
+                shuffle=True
+            )
+
+            print(f"Iterating through first 3 batches (Batch Size: {EXAMPLE_BATCH_SIZE}):")
+            for i, batch in enumerate(batch_iterator):
+                print(f"\nBatch {i+1}:")
+                print(f"  input_ids shape: {batch['input_ids'].shape}")
+                print(f"  labels shape: {batch['labels'].shape}")
+                if i >= 2:
+                    break
+            print("\nExample Usage Complete.")
+        else:
+             print("Dataset created but is empty.") 
