@@ -137,3 +137,27 @@ Parsing the SFT model's outputs for the required "The correct answer is [A/B/C/D
 **(c) Error Analysis & Qualitative Comparison:**
 
 The primary reason for the massive parsing failure was not subtle formatting deviations, but rather the SFT model fundamentally failing to adhere to the specific output format instruction ("Respond with a single sentence...") when it was embedded within the chat template. Instead of generating the requested sentence, the model consistently echoed the beginning of the user prompt (e.g., `"Answer the following multiple choice question..."`) and stopped, as seen in the example outputs. This contrasts sharply with the zero-shot baseline model, which, using a different prompt structure, largely followed the formatting instruction. This suggests that the SFT process, particularly the short duration, did not sufficiently train the model to prioritize specific formatting instructions within the learned chat interaction style for this task. A standard error analysis focused on incorrect answer choices (A/B/C/D) is precluded by the widespread failure to generate outputs in the required format.
+
+### 5.2 GSM8K SFT Evaluation
+
+The fine-tuned model (`./output/qwen-0.5b-sft-short`) was evaluated on the GSM8K test set using the SFT-adapted script (`cs336_alignment/evaluate_gsm8k_sft.py`). This script formatted the GSM8K questions using the SFT chat template (`<|im_start|>user...`) and used appropriate sampling parameters (`temperature=0.8`, `top_p=0.95`, `max_tokens=350`, `stop="<|im_end|>"`) for the reasoning task.
+
+**(a) Throughput:**
+
+Generating responses for the 1,319 GSM8K test examples took 144.42 seconds. This translates to a throughput of approximately **9.13 examples/second**. This is substantially lower than the zero-shot baseline throughput of ~21.00 examples/second, indicating a less efficient generation process for the SFT model on this task, likely due to more verbose or repetitive outputs.
+
+**(b) Performance:**
+
+*   **Parsing Failures:** The script failed to parse a final numerical answer from the SFT model's output for **26 out of 1,319 examples (1.97%)**. This is higher than the baseline's 0% failure rate.
+*   **Accuracy:** On the 1,291 examples where both the prediction and the ground truth could be parsed, the SFT model achieved an accuracy (Exact Match on the final number) of only **3.87%** (50 correct predictions).
+*   **Comparison:** This represents a dramatic collapse in performance compared to the zero-shot baseline accuracy of 22.02%.
+
+**(c) Error Analysis & Qualitative Comparison:**
+
+The SFT model's extremely low accuracy stems from a fundamental failure to perform the required mathematical reasoning task within the chat format. Qualitative analysis of the generated outputs (`gsm8k_sft_results.json`) reveals several critical issues not prevalent in the baseline:
+*   **Prompt/Input Repetition:** Outputs frequently begin by repeating the user's question multiple times before attempting an answer.
+*   **Reasoning Collapse & Arithmetic Errors:** The model struggles to follow logical steps, makes basic calculation errors, or fails to combine information correctly.
+*   **Irrelevant/Repetitive Tokens:** Outputs are littered with nonsensical words or tokens (e.g., `reibung`, `otle`, `Comeyer`, `\u00f1os`) repeated excessively.
+*   **Hallucination:** The model sometimes generates text completely unrelated to the math problem, resembling conversational fragments or text from different contexts.
+
+In contrast, the zero-shot baseline, while achieving only 22% accuracy, generally produced outputs that represented a coherent (though often flawed) attempt at step-by-step reasoning. The SFT process, optimized for general instruction following in a chat format over a short period, appears to have significantly degraded the model's ability to focus on and execute the structured reasoning required for GSM8K, leading to a near-total failure on this benchmark.
