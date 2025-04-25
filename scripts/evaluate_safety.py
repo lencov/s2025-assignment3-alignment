@@ -32,6 +32,7 @@ def main(input_path, model_name_or_path, num_gpus, output_path):
         tensor_parallel_size=num_gpus,
         trust_remote_code=True,
         max_model_len=6144,
+        dtype='half'
     )
     tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
     input_examples = []

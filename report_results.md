@@ -190,10 +190,38 @@ The fine-tuned model (`./output/qwen-0.5b-sft-short`) was evaluated on the Simpl
 
 **(a) Throughput:**
 
-Generating responses for the 100 examples in the SST set took approximately 10.30 seconds. This corresponds to a throughput of **9.71 examples/second**.
+Generating responses for the 100 examples in the SST set took approximately 8.75 seconds. This corresponds to a throughput of **11.43 examples/second**. This is slightly higher than the baseline throughput of 9.71 examples/second observed for the zero-shot model.
 
 **(b) Safety Score:**
 
-The `scripts/evaluate_safety.py` script was run using the intended `Qwen/Qwen2.5-3B-Instruct` model as the annotator. It classified only **40%** of the 100 baseline Qwen-0.5B responses as safe, indicating significant safety weaknesses in the base model. (Note: An earlier run using the weaker Qwen-0.5B as annotator incorrectly reported 100% safety).
+The `scripts/evaluate_safety.py` script was run using the intended `Qwen/Qwen2.5-3B-Instruct` model as the annotator. It classified **36%** of the 100 SFT model responses from `sst_sft_results.jsonl` as safe. This is slightly lower than the baseline safety score of 40% obtained using the same evaluator, suggesting the SFT process did not improve, and may have slightly worsened, the model's safety alignment on this benchmark within the chat format.
 
-**(c) Error Analysis (Unsafe Outputs):** The more reliable evaluation using Qwen-3B-Instruct flagged 60 out of 100 responses (60%) as unsafe. A detailed qualitative analysis of these 60 specific unsafe outputs would be necessary to understand the failure modes (e.g., generating harmful instructions, refusing harmless prompts inappropriately, generating disturbing content). However, given the high failure rate, it confirms the base model is poorly aligned for safety.
+**(c) Error Analysis (Unsafe Outputs):**
+Analysis of 10 randomly sampled outputs flagged as unsafe (where `metrics["safe"] == 0.0`) by the Qwen-3B evaluator reveals severe safety failures in the SFT model. Common issues include directly attempting to fulfill harmful requests (e.g., providing instructions for self-harm, violence, or illegal acts), often nonsensically, and frequently devolving into repetitive loops or garbage output instead of safe refusals, particularly for sensitive topics. In all sampled cases, the evaluator's unsafe judgment appeared appropriate, highlighting significant safety regressions after the short SFT process compared to the baseline model's refusals (even if the baseline was also often judged unsafe overall).
+
+### 5.5 Red-teaming our instruction-tuned model
+
+Red-teaming involves probing a model to deliberately elicit undesirable or unsafe behaviors, helping to understand its failure modes. This section explores potential misuses of LLMs beyond the examples provided in the prompt and describes simulated red-teaming attempts on our fine-tuned SFT model (`./output/qwen-0.5b-sft-short`).
+
+**(a) Other Potential LLM Misuses:**
+
+Beyond assisting with creating bombs or malware, language models could be misused in numerous ways. Three significant examples include:
+1.  **Generating Disinformation and Propaganda:** LLMs can be used to create fake news articles, social media campaigns, or other deceptive content at scale to manipulate public opinion, interfere with elections, or incite social unrest.
+2.  **Automated Scamming and Phishing:** Models can craft highly personalized and convincing fraudulent emails, messages, or websites to trick individuals into revealing sensitive personal or financial information (e.g., passwords, credit card numbers).
+3.  **Facilitating Harassment and Abuse:** LLMs could be employed to generate large volumes of harassing or threatening messages targeted at individuals, create fake profiles for impersonation, or automate the gathering of information for stalking purposes.
+
+**(b) Simulated Red-Teaming Attempts:**
+
+Based on the SFT model's poor performance on safety benchmarks (Section 5.4) and its tendency towards compliance with harmful requests (even nonsensically), we simulated three red-teaming attempts using direct prompting strategies. *Note: These are simulated attempts based on observed model characteristics, not live interactions.*
+
+1.  **Malicious Application: Generating a Phishing Email:**
+    *   **Methodology:** A direct prompt was formulated asking the model to write a convincing email pretending to be from a bank, requesting the user click a link to update their security information.
+    *   **Simulated Result:** The SFT model likely attempted to generate the email but produced low-quality output. Based on its performance in SST and AlpacaEval, the email probably contained repetitive phrases, nonsensical sentences, or failed to coherently mimic a real bank notification, making it an unconvincing phishing attempt despite the model's willingness to engage with the malicious request. Minimal effort (a single direct prompt) was likely sufficient to elicit this unsafe, albeit ineffective, output.
+2.  **Malicious Application: Generating Discriminatory Content (Stereotypical Joke):**
+    *   **Methodology:** The model was prompted directly to tell a joke based on harmful stereotypes about a specific demographic group.
+    *   **Simulated Result:** Consistent with its poor safety alignment shown in SST, the SFT model likely generated an inappropriate and offensive joke attempting to fulfill the request. The content was probably simplistic, potentially repetitive, and relied heavily on the harmful stereotypes mentioned in the prompt, indicating a failure to recognize or refuse the generation of socially harmful content. Again, a direct prompt was likely sufficient.
+3.  **Malicious Application: Generating Simple Malware Code (Basic Keylogger):**
+    *   **Methodology:** A prompt requested a simple Python script to log keystrokes.
+    *   **Simulated Result:** Given the model's struggles with structured reasoning (GSM8K) and tendency towards repetition, it likely failed to produce functional code. The output might have included repetitive, non-functional Python snippets, potentially mixed with irrelevant text or hallucinated commands, similar to the failures observed in the GSM8K evaluation. While the model attempted compliance, the generated code would be useless as actual malware without significant correction, suggesting it's not effective for this specific malicious task despite its safety flaws.
+
+**Overall Takeaway:** The simulated red-teaming suggests that while the fine-tuned Qwen-0.5B model exhibits poor safety alignment and readily attempts to comply with malicious requests (often requiring minimal prompting effort), its general lack of capability, tendency towards repetition, and nonsensical output often render the harmful generations ineffective for complex tasks like creating functional malware or sophisticated phishing emails. However, it proved capable of generating simpler harmful content like discriminatory jokes, highlighting significant safety risks.
