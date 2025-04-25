@@ -7,7 +7,8 @@ from typing import List, Dict, Any
 import random # Added for sampling in analysis
 
 # --- Constants ---
-HUGGINGFACE_HUB_URL = "https://huggingface.co/datasets/Anthropic/hh-rlhf/resolve/main/"
+# HUGGINGFACE_HUB_URL = "https://huggingface.co/datasets/Anthropic/hh-rlhf/resolve/main/"
+HUGGINGFACE_HUB_URL = "https://huggingface.co/datasets/Anthropic/hh-rlhf/resolve/main/data/" # Added /data/
 HH_FILES = [
     "harmless-base.jsonl.gz",
     "helpful-base.jsonl.gz",
