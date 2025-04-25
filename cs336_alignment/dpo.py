@@ -40,20 +40,21 @@ def get_sequence_log_probs(
         # Log probs shape: (batch_size, seq_len - 1, vocab_size)
         log_probs = F.log_softmax(shifted_logits, dim=-1)
 
-        # Gather the log probabilities of the actual next tokens
-        # We use gather to select the log prob of the correct token at each position
-        # Log probs shape: (batch_size, seq_len - 1)
-        per_token_log_probs = torch.gather(log_probs, -1, shifted_labels.unsqueeze(-1)).squeeze(-1)
+        # Create mask for valid (non -100) labels BEFORE gathering
+        mask = (shifted_labels != -100)
 
-        # Mask out padding tokens (assuming padding token id is tokenizer.pad_token_id)
-        # We only want to sum log probs for actual tokens, not padding
-        # Create a mask based on shifted labels
-        mask = (shifted_labels != -100) # Usually -100 is used for ignored labels/padding in HF
-        # Apply the mask - set log probs of padding tokens to 0
+        # Clone shifted_labels for indexing, clamp invalid indices to 0 (doesn't matter due to mask)
+        # This prevents the gather operation from failing on -100
+        gather_labels = shifted_labels.clone()
+        gather_labels[~mask] = 0 # Set indices for masked positions to 0 (valid index)
+
+        # Gather the log probabilities using the clamped labels
+        per_token_log_probs = torch.gather(log_probs, -1, gather_labels.unsqueeze(-1)).squeeze(-1)
+
+        # Apply the original mask AFTER gathering to zero out log probs for padded tokens
         masked_log_probs = per_token_log_probs * mask
 
-        # Sum the log probabilities for each sequence in the batch
-        # sequence_log_probs shape: (batch_size,)
+        # Sum the log probabilities for each sequence
         sequence_log_probs = masked_log_probs.sum(dim=-1)
 
     return sequence_log_probs
