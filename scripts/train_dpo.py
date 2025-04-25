@@ -15,7 +15,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedModel, P
 from typing import Tuple
 
 # Assuming these utility functions exist in your project structure
-from cs336_alignment.dpo import dpo_loss, get_sequence_logprob, get_dpo_dataset # <-- Use updated function names and add get_dpo_dataset
+from cs336_alignment.dpo import dpo_loss, get_sequence_logprob, get_dpo_dataset, PROMPT_FORMAT # <-- Added PROMPT_FORMAT
 
 # Setup basic logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
