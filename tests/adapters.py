@@ -6,9 +6,9 @@ from typing import Any
 
 import torch
 from torch.utils.data import Dataset
-from transformers import PreTrainedTokenizerBase
+from transformers import PreTrainedTokenizerBase, PreTrainedModel
 
-
+from cs336_alignment.dpo import compute_per_instance_dpo_loss
 from cs336_alignment.sft_dataset import PackedSFTDataset, iterate_batches
 from cs336_alignment.parsing_utils import parse_mmlu_response, parse_gsm8k_response
 
@@ -115,9 +115,9 @@ def run_parse_gsm8k_response(
     return parse_gsm8k_response(model_output=model_output)
 
 
-def compute_per_instance_dpo_loss(
-    lm: torch.nn.Module,
-    lm_ref: torch.nn.Module,
+def per_instance_dpo(
+    lm: PreTrainedModel,
+    lm_ref: PreTrainedModel,
     tokenizer: PreTrainedTokenizerBase,
     beta: float,
     prompt: str,
@@ -125,26 +125,15 @@ def compute_per_instance_dpo_loss(
     response_rejected: str,
 ) -> torch.Tensor:
     """
-    Given two language models (`lm`, and the "reference model" `lm_ref`),
-    their tokenizer, the DPO beta hyperparameter, a prompt and a pair
-    of responses to the prompt, computes the value of the DPO loss for this example.
-
-    lm: torch.nn.Module
-        Language model being trained.
-    lm_ref: torch.nn.Module
-        Reference language model.
-    tokenizer: PreTrainedTokenizerBase
-        Tokenizer for both language models.
-    beta: float
-        DPO beta hyperparameter.
-    prompt: str
-        Prompt for this instance of preference pair.
-    response_chosen: str
-        Preferred response to the prompt.
-    response_rejected: str
-        Rejected response to the prompt.
-
-    Returns:
-        torch.Tensor with the DPO loss for this example.
+    Adapter function to call compute_per_instance_dpo_loss.
+    (Function signature matches the test expectation).
     """
-    raise NotImplementedError
+    return compute_per_instance_dpo_loss(
+        lm=lm,
+        lm_ref=lm_ref,
+        tokenizer=tokenizer,
+        beta=beta,
+        prompt=prompt,
+        response_chosen=response_chosen,
+        response_rejected=response_rejected,
+    )
