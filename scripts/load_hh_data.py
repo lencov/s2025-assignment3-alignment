@@ -1,238 +1,216 @@
-#!/usr/bin/env python3
 import gzip
 import json
 import os
-import requests # Added for downloading
-from typing import List, Dict, Any
-import random # Added for sampling in analysis
+import logging
+from tqdm import tqdm
+import random # Added for sampling
+
+# Setup basic logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # --- Constants ---
-HUGGINGFACE_HUB_URL = "https://huggingface.co/datasets/Anthropic/hh-rlhf/tree/main" # Changed resolve to raw
-HH_FILES = [
-    "harmless-base.jsonl.gz",
-    "helpful-base.jsonl.gz",
-    "helpful-online.jsonl.gz",
-    "helpful-rejection-sampled.jsonl.gz",
-]
+DEFAULT_DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'data', 'hh') # Use absolute path for robustness
 
-def download_file(url: str, destination: str):
-    """Downloads a file from a URL to a destination, handling potential errors."""
-    print(f"  Downloading {os.path.basename(destination)} from {url}...")
-    try:
-        response = requests.get(url, stream=True, timeout=30) # Added timeout
-        response.raise_for_status()  # Raise an exception for bad status codes (4xx or 5xx)
+# Map the actual downloaded filenames to their conceptual source
+# Assuming the download order corresponds to: harmless-base, helpful-base, helpful-online, helpful-rejection-sampled
+DOWNLOADED_FILES_MAP = {
+    "train.jsonl.gz": "harmless-base",
+    "train.jsonl.gz.1": "helpful-base",
+    "train.jsonl.gz.2": "helpful-online",
+    "train.jsonl.gz.3": "helpful-rejection-sampled",
+}
 
-        # Ensure destination directory exists
-        os.makedirs(os.path.dirname(destination), exist_ok=True)
+# --- Helper Functions ---
 
-        with open(destination, "wb") as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                f.write(chunk)
-        print(f"  Successfully downloaded to {destination}")
-        return True
-    except requests.exceptions.RequestException as e:
-        print(f"  Error downloading {url}: {e}")
-        # Attempt to remove partially downloaded file if it exists
-        if os.path.exists(destination):
-            try:
-                os.remove(destination)
-                print(f"  Removed partially downloaded file: {destination}")
-            except OSError as remove_e:
-                print(f"  Error removing partially downloaded file {destination}: {remove_e}")
-        return False
-    except Exception as e:
-        print(f"  An unexpected error occurred during download: {e}")
-        # Attempt removal here too
-        if os.path.exists(destination):
-             try:
-                 os.remove(destination)
-                 print(f"  Removed partially downloaded file: {destination}")
-             except OSError as remove_e:
-                 print(f"  Error removing partially downloaded file {destination}: {remove_e}")
-        return False
+def parse_conversation(conversation_text):
+    """Parses the conversation string into a list of {'speaker': speaker, 'text': text} dicts."""
+    turns = []
+    # Split conversation turns, which are separated by double newlines
+    segments = conversation_text.strip().split('\n\n')
+    for segment in segments:
+        if segment.startswith("Human:"):
+            speaker = "Human"
+            text = segment[len("Human:"):].strip()
+        elif segment.startswith("Assistant:"):
+            speaker = "Assistant"
+            text = segment[len("Assistant:"):].strip()
+        else:
+            # Ignore potential malformed segments or empty lines
+            logging.debug(f"Skipping unrecognized segment: {segment[:50]}...")
+            continue
+        if text: # Only add if text is not empty
+            turns.append({"speaker": speaker, "text": text})
+    return turns
 
-def load_hh_dataset(data_dir: str, max_examples_per_file: int = -1) -> List[Dict[str, Any]]:
+# --- Main Loading Function (Problem 6.2.1 Deliverable) ---
+
+def load_processed_hh_dataset(data_dir=DEFAULT_DATA_DIR, file_map=DOWNLOADED_FILES_MAP, max_examples_per_file=None):
     """
-    Loads and processes the Anthropic HH-RLHF dataset from specified files.
-    Downloads files from Hugging Face Hub if they are not found locally.
+    Loads the pre-downloaded Anthropic HH dataset files.
+    Filters for single-turn conversations and extracts instruction, chosen, and rejected responses.
 
     Args:
-        data_dir: The directory containing the .jsonl.gz files
-                  (e.g., '/home/shared/hh' or './data/hh').
-        max_examples_per_file: Maximum number of examples to load per file
-                               (-1 for unlimited). Useful for quick testing.
+        data_dir (str): The directory where the data files are located.
+        file_map (dict): A dictionary mapping actual filenames to conceptual source names.
+        max_examples_per_file (int, optional): Maximum examples to load per file. Defaults to None (load all).
 
     Returns:
-        A list of dictionaries, where each dictionary represents a single-turn
-        preference example with keys: 'instruction', 'chosen', 'rejected',
-        and 'source_file'.
+        list: A list of dictionaries, each containing:
+              'instruction' (str): The initial human prompt.
+              'chosen' (str): The chosen assistant response.
+              'rejected' (str): The rejected assistant response.
+              'source_file' (str): The conceptual source file name (e.g., "harmless-base").
     """
-    dataset = []
+    logging.info(f"Using data directory: {data_dir}")
+    if max_examples_per_file:
+        logging.info(f"Max examples per file: {max_examples_per_file}")
 
-    print(f"Loading HH dataset from {data_dir}...")
-    # Ensure the target data directory exists or can be created
-    try:
-        os.makedirs(data_dir, exist_ok=True)
-    except OSError as e:
-        print(f"Error: Could not create data directory {data_dir}: {e}")
-        return [] # Cannot proceed without data directory
+    all_examples = []
 
-    for filename in HH_FILES:
-        filepath = os.path.join(data_dir, filename)
+    logging.info(f"Loading HH dataset from pre-downloaded files in {data_dir}...")
 
-        # Check if file exists, download if not
-        if not os.path.exists(filepath):
-            print(f"File not found locally: {filepath}")
-            download_url = HUGGINGFACE_HUB_URL + filename
-            if not download_file(download_url, filepath):
-                print(f"Skipping {filename} due to download failure.")
-                continue # Skip this file if download failed
-        # Proceed if file exists locally or was just downloaded successfully
-        print(f"Processing {filename}...")
-        source_file_short = filename.replace(".jsonl.gz", "")
-        loaded_count = 0
+    for filename, source_name in file_map.items():
+        file_path = os.path.join(data_dir, filename)
 
+        if not os.path.exists(file_path):
+            logging.warning(f"File not found: {file_path}. Skipping.")
+            continue
+        else:
+            logging.info(f"Processing file: {file_path} (Source: {source_name})")
+
+        # Process the file
+        processed_count = 0
+        skipped_multi_turn = 0
+        skipped_parsing_error = 0
         try:
-            with gzip.open(filepath, "rt", encoding="utf-8") as f:
-                for line in f:
-                    if max_examples_per_file > 0 and loaded_count >= max_examples_per_file:
-                        print(f"  Reached max_examples_per_file ({max_examples_per_file}) for {filename}.")
-                        break # Stop reading this file
-
+            # Open the gzipped file for reading text
+            with gzip.open(file_path, 'rt', encoding='utf-8') as f:
+                # Iterate line by line (each line is a JSON object)
+                for line in tqdm(f, desc=f"Processing {filename}"):
+                    # Optional: Limit examples per file for faster testing/debugging
+                    if max_examples_per_file and processed_count >= max_examples_per_file:
+                        break
                     try:
+                        # Load JSON data from the line
                         data = json.loads(line)
-                        chosen_conversation = data.get("chosen")
-                        rejected_conversation = data.get("rejected")
 
-                        if not chosen_conversation or not rejected_conversation:
-                            continue # Skip if essential data is missing
+                        # Parse the 'chosen' and 'rejected' conversations
+                        chosen_conversation = parse_conversation(data['chosen'])
+                        rejected_conversation = parse_conversation(data['rejected'])
 
-                        # Simple check for single-turn: Human speaks once, Assistant responds once.
-                        # Counting turns more robustly might involve parsing the '\n\nHuman:' structure.
-                        # For simplicity, we check if the 'chosen' conversation contains '\n\nHuman:' more than once.
-                        # And also check if the first turn is indeed Human.
-                        # We also need to ensure Assistant responds only once in the chosen/rejected text.
-                        is_single_turn_chosen = (
-                            chosen_conversation.strip().startswith("Human:") and
-                            chosen_conversation.count("\n\nHuman:") == 1 and
-                            chosen_conversation.count("\n\nAssistant:") == 1
-                        )
-                        is_single_turn_rejected = (
-                            rejected_conversation.strip().startswith("Human:") and
-                            rejected_conversation.count("\n\nHuman:") == 1 and
-                            rejected_conversation.count("\n\nAssistant:") == 1
+                        # --- Filtering Logic ---
+                        # We need exactly one Human turn followed by one Assistant turn.
+                        # The Human prompt must be identical in both chosen and rejected.
+                        is_single_turn = (
+                            len(chosen_conversation) == 2 and
+                            chosen_conversation[0]['speaker'] == 'Human' and
+                            chosen_conversation[1]['speaker'] == 'Assistant' and
+                            len(rejected_conversation) == 2 and
+                            rejected_conversation[0]['speaker'] == 'Human' and
+                            rejected_conversation[1]['speaker'] == 'Assistant' and
+                            chosen_conversation[0]['text'] == rejected_conversation[0]['text'] # Ensure prompts match
                         )
 
-                        if is_single_turn_chosen and is_single_turn_rejected:
+                        if is_single_turn:
+                            # Extract the required components
+                            instruction = chosen_conversation[0]['text']
+                            chosen_response = chosen_conversation[1]['text']
+                            rejected_response = rejected_conversation[1]['text']
 
-                            # Extract first human message (instruction)
-                            instruction_end_index = chosen_conversation.find("\n\nAssistant:")
-                            if instruction_end_index == -1:
-                                continue # Should not happen if count check passed, but safety first
+                            # Append the processed example to our list
+                            all_examples.append({
+                                "instruction": instruction,
+                                "chosen": chosen_response,
+                                "rejected": rejected_response,
+                                "source_file": source_name # Use the conceptual name
+                            })
+                            processed_count += 1
+                        else:
+                            # This conversation doesn't meet the single-turn criteria
+                            skipped_multi_turn += 1
+                            # Optional: Log the skipped multi-turn examples if needed for debugging
+                            # logging.debug(f"Skipping multi-turn/mismatched prompt example: {data['chosen'][:100]}...")
 
-                            instruction = chosen_conversation[len("Human:"):instruction_end_index].strip()
-
-                            # Extract first assistant response (chosen)
-                            chosen_response_start_index = instruction_end_index + len("\n\nAssistant:")
-                            # Find the end of the first assistant turn (either EOF or next Human turn)
-                            chosen_response_end_index = chosen_conversation.find("\n\nHuman:", chosen_response_start_index)
-                            chosen_response = chosen_conversation[chosen_response_start_index : chosen_response_end_index if chosen_response_end_index != -1 else None].strip()
-
-
-                            # Extract first assistant response (rejected) - instruction should be identical
-                            rejected_instruction_end_index = rejected_conversation.find("\n\nAssistant:")
-                            if rejected_instruction_end_index == -1:
-                                 continue # Sanity check
-                            rejected_response_start_index = rejected_instruction_end_index + len("\n\nAssistant:")
-                            rejected_response_end_index = rejected_conversation.find("\n\nHuman:", rejected_response_start_index)
-                            rejected_response = rejected_conversation[rejected_response_start_index : rejected_response_end_index if rejected_response_end_index != -1 else None].strip()
-
-                            # Ensure responses are not empty
-                            if instruction and chosen_response and rejected_response:
-                                 dataset.append({
-                                    "instruction": instruction,
-                                    "chosen": chosen_response,
-                                    "rejected": rejected_response,
-                                    "source_file": source_file_short,
-                                })
-                                 loaded_count += 1
-
+                    # Handle potential errors in individual lines
                     except json.JSONDecodeError:
-                        # print(f"Warning: Skipping malformed JSON line in {filename}")
-                        pass # Reduce verbosity
-                    except Exception as e:
-                        print(f"Warning: Error processing line in {filename}: {e}")
-        except gzip.BadGzipFile:
-             print(f"Error: Bad gzip file at {filepath}. It might be corrupted or not a valid gzip file.")
-        except Exception as e:
-            print(f"Error opening or reading {filepath}: {e}")
+                        skipped_parsing_error += 1
+                        logging.debug(f"Skipping line due to JSON decode error in {filename}")
+                    except KeyError as e:
+                         skipped_parsing_error += 1
+                         logging.debug(f"Skipping line due to missing key {e} in {filename}")
+                    except Exception as e_inner:
+                         skipped_parsing_error += 1
+                         logging.warning(f"Skipping line due to unexpected error: {e_inner} in {filename}")
 
 
-    print(f"Finished loading. Total single-turn examples processed: {len(dataset)}")
-    return dataset
+            logging.info(f"Finished processing {filename}. Added {processed_count} examples. "
+                         f"Skipped {skipped_multi_turn} (multi-turn/mismatched), Skipped {skipped_parsing_error} (parse error).")
 
-def analyze_hh_samples(dataset: List[Dict[str, Any]], num_samples: int = 3):
-    """Analyzes random samples from the loaded HH dataset."""
-    if not dataset:
-        print("Dataset is empty. Cannot analyze samples.")
-        return
+        except FileNotFoundError:
+             # This shouldn't happen with the check above, but handle defensively
+             logging.error(f"File disappeared during processing: {file_path}. Skipping.")
+        except Exception as e_outer:
+             # Handle errors opening or reading the file
+             logging.error(f"An error occurred processing file {file_path}: {e_outer}. Skipping.")
 
-    helpful_sources = ["helpful-base", "helpful-online", "helpful-rejection-sampled"]
-    harmless_sources = ["harmless-base"]
 
-    helpful_samples = [d for d in dataset if d['source_file'] in helpful_sources]
-    harmless_samples = [d for d in dataset if d['source_file'] in harmless_sources]
+    logging.info(f"Finished loading all files. Total single-turn examples processed: {len(all_examples)}")
+    return all_examples
 
-    print(f"\n--- Analyzing {num_samples} Random 'Helpful' Samples ---")
-    if len(helpful_samples) >= num_samples:
-        for i, sample in enumerate(random.sample(helpful_samples, num_samples)):
-            print(f"\nHelpful Sample {i+1} (from {sample['source_file']}):")
-            print(f"  Instruction: {sample['instruction'][:200]}...") # Truncate for readability
-            print(f"  Chosen:      {sample['chosen'][:200]}...")
-            print(f"  Rejected:    {sample['rejected'][:200]}...")
-            # Add analysis comments here based on full text if needed
-    else:
-        print(f"  Not enough helpful samples found (found {len(helpful_samples)}).")
-
-    print(f"\n--- Analyzing {num_samples} Random 'Harmless' Samples ---")
-    if len(harmless_samples) >= num_samples:
-        for i, sample in enumerate(random.sample(harmless_samples, num_samples)):
-            print(f"\nHarmless Sample {i+1} (from {sample['source_file']}):")
-            print(f"  Instruction: {sample['instruction'][:200]}...")
-            print(f"  Chosen:      {sample['chosen'][:200]}...")
-            print(f"  Rejected:    {sample['rejected'][:200]}...")
-            # Add analysis comments here based on full text if needed
-    else:
-         print(f"  Not enough harmless samples found (found {len(harmless_samples)}).")
-
+# --- Main Execution Block (for Problem 6.2.2 Analysis) ---
 
 if __name__ == "__main__":
-    # Example usage: Assumes data is in a subdirectory './data/hh'
-    # Adjust this path as needed.
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    default_data_dir = os.path.join(os.path.dirname(current_dir), 'data', 'hh') # Assumes script is in scripts/, data in ../data/
+    # Load the dataset using the function defined above
+    # Set max_examples_per_file=None to load all data, or a small number for testing
+    loaded_data = load_processed_hh_dataset(max_examples_per_file=None) # Load all
 
-    # --- Configuration ---
-    hh_data_directory = os.environ.get("HH_DATA_DIR", default_data_dir) # Use environment variable or default
-    examples_per_file_limit = int(os.environ.get("HH_MAX_EXAMPLES", 100)) # Load only 100 examples per file for faster testing, set -1 for all
-
-    print(f"Using data directory: {hh_data_directory}")
-    print(f"Max examples per file: {examples_per_file_limit if examples_per_file_limit > 0 else 'Unlimited'}")
-
-    # --- Load Data ---
-    loaded_dataset = load_hh_dataset(hh_data_directory, max_examples_per_file=examples_per_file_limit)
-
-    # --- Analyze Samples ---
-    if loaded_dataset:
-        analyze_hh_samples(loaded_dataset, num_samples=3)
-        print(f"\nTotal examples loaded: {len(loaded_dataset)}")
-        source_counts = {}
-        for item in loaded_dataset:
-            source = item['source_file']
-            source_counts[source] = source_counts.get(source, 0) + 1
-        print("Examples per source file:")
-        for source, count in source_counts.items():
-            print(f"  {source}: {count}")
-    else:
+    if not loaded_data:
         print("\nDataset loading failed or resulted in an empty dataset.")
-        print(f"Please check the path ({hh_data_directory}) and ensure network connectivity if downloads are needed.") 
+        print(f"Please check the path ({DEFAULT_DATA_DIR}) and ensure the files {list(DOWNLOADED_FILES_MAP.keys())} exist.")
+    else:
+        print(f"\nSuccessfully loaded {len(loaded_data)} single-turn examples.")
+
+        # --- Analysis for Problem 6.2.2 ---
+        print("\nAnalysis for Problem 6.2.2:")
+
+        # Separate examples by source type
+        helpful_examples = [ex for ex in loaded_data if 'helpful' in ex['source_file']]
+        harmless_examples = [ex for ex in loaded_data if 'harmless' in ex['source_file']]
+
+        print(f"\nFound {len(helpful_examples)} 'helpful' source examples and {len(harmless_examples)} 'harmless' source examples.")
+
+        # Ensure we have enough examples to sample
+        num_to_sample = 3
+
+        if len(helpful_examples) >= num_to_sample:
+            print("\n--- Random 'Helpful' Source Examples ---")
+            random.seed(42) # for reproducibility
+            # Sample 3 random examples from the 'helpful' sources
+            sampled_helpful = random.sample(helpful_examples, num_to_sample)
+            for i, example in enumerate(sampled_helpful):
+                 print(f"\nHelpful Example {i+1} (from {example['source_file']}):")
+                 print(f"Instruction:\n{example['instruction']}")
+                 print("-" * 20)
+                 print(f"Chosen Response:\n{example['chosen']}")
+                 print("-" * 20)
+                 print(f"Rejected Response:\n{example['rejected']}")
+                 print("-" * 20)
+        else:
+            print(f"\nNot enough 'helpful' examples to sample {num_to_sample}.")
+
+
+        if len(harmless_examples) >= num_to_sample:
+            print("\n--- Random 'Harmless' Source Examples ---")
+            random.seed(42) # for reproducibility (can use different seed if desired)
+            # Sample 3 random examples from the 'harmless' sources
+            sampled_harmless = random.sample(harmless_examples, num_to_sample)
+            for i, example in enumerate(sampled_harmless):
+                 print(f"\nHarmless Example {i+1} (from {example['source_file']}):")
+                 print(f"Instruction:\n{example['instruction']}")
+                 print("-" * 20)
+                 print(f"Chosen Response:\n{example['chosen']}")
+                 print("-" * 20)
+                 print(f"Rejected Response:\n{example['rejected']}")
+                 print("-" * 20)
+        else:
+             print(f"\nNot enough 'harmless' examples to sample {num_to_sample}.")
