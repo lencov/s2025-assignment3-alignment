@@ -84,54 +84,51 @@ def compute_per_instance_dpo_loss(
         A scalar tensor containing the DPO loss for this instance.
     """
 
-    # Set pad token if not defined (common for GPT-2 style models)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    # 1. Format sequences using Alpaca template and add EOS token
+    # 1. Format sequences
     chosen_sequence_str = format_alpaca(prompt, response_chosen) + tokenizer.eos_token
     rejected_sequence_str = format_alpaca(prompt, response_rejected) + tokenizer.eos_token
 
-    # 2. Tokenize the sequences
-    # We tokenize them together for potential padding efficiency, though for single instances it doesn't matter much.
-    # Ensure padding is done correctly if batching in the future.
-    # For single instance, we often don't need explicit padding if handled by the model/loss function.
-    # Using return_tensors='pt' gives PyTorch tensors.
-    # Set padding=True and truncation=True for robust handling, though DPO often uses unpacked sequences.
-    # max_length might need adjustment based on model capabilities.
+    # Tokenize prompt separately to get its length
+    prompt_tokens = tokenizer(prompt, return_tensors="pt", padding=False, truncation=False)
+    prompt_length = prompt_tokens.input_ids.shape[1] # Get the length of prompt tokens
+
+    # 2. Tokenize the full sequences
     tokenized_sequences = tokenizer(
         [chosen_sequence_str, rejected_sequence_str],
         return_tensors="pt",
-        padding=True, # Pad to the longest sequence in the pair
+        padding=True,
         truncation=True,
-        max_length=tokenizer.model_max_length # Use model's max length
+        max_length=tokenizer.model_max_length
     )
 
     input_ids = tokenized_sequences.input_ids
     attention_mask = tokenized_sequences.attention_mask
 
-    # Create labels - in standard Causal LM, labels are the same as input_ids
-    # Loss function inside the model usually handles the shifting
-    # For manual calculation, we might need to handle ignored indices (e.g., padding)
+    # 3. Create labels, masking out prompt tokens and padding
     labels = input_ids.clone()
-    # Ensure padding tokens are ignored in loss calculation if necessary (often -100)
+    # Mask padding tokens
     if tokenizer.pad_token_id is not None:
         labels[labels == tokenizer.pad_token_id] = -100
+    # Mask prompt tokens - IMPORTANT: Apply mask to the first `prompt_length` tokens
+    # Note: The loss calculation implicitly shifts labels, so we mask up to `prompt_length - 1` index in the original label tensor.
+    labels[:, :prompt_length] = -100 # Mask prompt tokens
 
-    # Ensure tensors are on the correct devices
+    # 4. Ensure tensors are on the correct devices
     lm_device = next(lm.parameters()).device
     ref_device = next(lm_ref.parameters()).device
 
     input_ids_lm = input_ids.to(lm_device)
     attention_mask_lm = attention_mask.to(lm_device)
-    labels_lm = labels.to(lm_device)
+    labels_lm = labels.to(lm_device) # Labels now have prompt masked out
 
     input_ids_ref = input_ids.to(ref_device)
     attention_mask_ref = attention_mask.to(ref_device)
-    labels_ref = labels.to(ref_device) # Labels might also be needed if ref model computes loss internally
+    labels_ref = labels.to(ref_device) # Pass the same masked labels
 
-    # 3. Compute log probabilities using the helper function
-    # Log probs shape: (batch_size,) where batch_size is 2 here (chosen, rejected)
+    # 5. Compute sequence log probabilities (now effectively only for response tokens)
     log_probs_lm = get_sequence_log_probs(lm, input_ids_lm, labels_lm, attention_mask_lm)
     log_probs_ref = get_sequence_log_probs(lm_ref, input_ids_ref, labels_ref, attention_mask_ref)
 
@@ -142,16 +139,11 @@ def compute_per_instance_dpo_loss(
     log_probs_ref_chosen = log_probs_ref[0].to(lm_device)
     log_probs_ref_rejected = log_probs_ref[1].to(lm_device)
 
-    # 4. Calculate log-prob differences
-    # pi_log_prob_diff = log P_pi(chosen | prompt) - log P_pi(rejected | prompt)
-    # ref_log_prob_diff = log P_ref(chosen | prompt) - log P_ref(rejected | prompt)
-    # Leveraging the hint: log P(y|x) = log P(x,y) - log P(x)
-    # So, log P(yw|x) - log P(yl|x) = log P(x,yw) - log P(x,yl)
+    # 6. Calculate log-prob differences for response tokens
     pi_log_prob_diff = log_probs_lm_chosen - log_probs_lm_rejected
     ref_log_prob_diff = log_probs_ref_chosen - log_probs_ref_rejected
 
-    # 5. Compute the DPO loss (Equation 3)
-    # loss = -log_sigmoid(beta * (pi_log_prob_diff - ref_log_prob_diff))
+    # 7. Compute the DPO loss (Equation 3)
     logits = beta * (pi_log_prob_diff - ref_log_prob_diff)
     loss = -F.logsigmoid(logits)
 
