@@ -15,8 +15,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedModel, P
 from typing import Tuple
 
 # Assuming these utility functions exist in your project structure
-from cs336_alignment.dpo import compute_per_instance_dpo_loss, get_sequence_log_probs, format_alpaca
-from scripts.load_hh_data import load_processed_hh_dataset # Use the HH loading script
+from cs336_alignment.dpo import dpo_loss, get_sequence_logprob, get_dpo_dataset # <-- Use updated function names and add get_dpo_dataset
 
 # Setup basic logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -102,41 +101,33 @@ def evaluate(model: PreTrainedModel, model_ref: PreTrainedModel, tokenizer: PreT
             rejected = batch["rejected"][i]
 
             # --- Calculate Loss ---
-            loss = compute_per_instance_dpo_loss(
-                lm=model,
-                lm_ref=model_ref,
+            loss = dpo_loss(
+                policy_model=model,
+                reference_model=model_ref,
                 tokenizer=tokenizer,
                 beta=beta,
                 prompt=prompt,
-                response_chosen=chosen,
-                response_rejected=rejected,
+                chosen_response=chosen,
+                rejected_response=rejected,
             )
             batch_losses.append(loss.item())
 
             # --- Calculate implicit reward accuracy ---
-            chosen_sequence_str = format_alpaca(prompt, chosen) + tokenizer.eos_token
-            rejected_sequence_str = format_alpaca(prompt, rejected) + tokenizer.eos_token
-            tokenized_sequences = tokenizer(
-                [chosen_sequence_str, rejected_sequence_str],
-                return_tensors="pt", padding=True, truncation=True,
-                max_length=tokenizer.model_max_length
-            ).to(device)
+            eos_token_id = tokenizer.eos_token_id
+            if eos_token_id is None: eos_token_id = tokenizer.pad_token_id # Fallback if EOS missing
 
-            labels = tokenized_sequences.input_ids.clone()
-            if tokenizer.pad_token_id is not None:
-                labels[labels == tokenizer.pad_token_id] = -100
+            chosen_sequence_str = PROMPT_FORMAT.format(prompt=prompt, response=chosen)
+            rejected_sequence_str = PROMPT_FORMAT.format(prompt=prompt, response=rejected)
 
-            # Mask prompt tokens using the same logic as in compute_per_instance_dpo_loss
-            # We need to compute the log prob of the response part only
-            prompt_tokens = tokenizer(prompt, return_tensors="pt", padding=False, truncation=False)
-            prompt_length = prompt_tokens.input_ids.shape[1]
-            # Ensure masking doesn't go out of bounds if prompt is long
-            labels[:, :min(prompt_length, labels.shape[1])] = -100
+            chosen_input_ids = torch.tensor(tokenizer.encode(chosen_sequence_str) + [eos_token_id], dtype=torch.long).unsqueeze(0).to(device)
+            rejected_input_ids = torch.tensor(tokenizer.encode(rejected_sequence_str) + [eos_token_id], dtype=torch.long).unsqueeze(0).to(device)
 
-            # Get log probs for the *current policy model* only (response tokens)
-            log_probs_lm = get_sequence_log_probs(model, tokenized_sequences.input_ids, labels, tokenized_sequences.attention_mask)
-            log_probs_lm_chosen = log_probs_lm[0]
-            log_probs_lm_rejected = log_probs_lm[1]
+            chosen_labels = chosen_input_ids[:, 1:].clone()
+            rejected_labels = rejected_input_ids[:, 1:].clone()
+
+            # Get log probs for the *current policy model* only using the simplified helper
+            log_probs_lm_chosen = get_sequence_logprob(model, chosen_input_ids, chosen_labels)
+            log_probs_lm_rejected = get_sequence_logprob(model, rejected_input_ids, rejected_labels)
 
             batch_pi_log_probs_chosen.append(log_probs_lm_chosen.item())
             batch_pi_log_probs_rejected.append(log_probs_lm_rejected.item())
@@ -217,24 +208,43 @@ def main(config: DPOConfig):
 
     # --- Load Dataset --- #
     logging.info(f"Loading HH dataset from: {config.hh_dataset_dir}")
-    # Make sure the file_map inside load_hh_data corresponds to your file names
-    full_dataset = load_processed_hh_dataset(data_dir=config.hh_dataset_dir)
-    if not full_dataset:
-        raise ValueError(f"Failed to load dataset from {config.hh_dataset_dir}. Check paths/files.")
+    # Use get_dpo_dataset directly from cs336_alignment.dpo
+    train_dataset_list, val_dataset_list = get_dpo_dataset(
+        data_dir=config.hh_dataset_dir,
+        tokenizer=tokenizer,
+        val_set_size=config.val_set_size,
+        seed=config.seed
+    )
 
-    # --- Split Dataset --- #
-    indices = list(range(len(full_dataset)))
-    random.shuffle(indices)
-    val_indices = indices[:config.val_set_size]
-    train_indices = indices[config.val_set_size:]
-    train_dataset = Subset(full_dataset, train_indices)
-    val_dataset = Subset(full_dataset, val_indices)
+    if not train_dataset_list and not val_dataset_list:
+        raise ValueError(f"Failed to load dataset from {config.hh_dataset_dir}. Check paths/files and parsing logic.")
+
+    # Create Dataset objects from the lists of dictionaries
+    class DPODictDataset(Dataset):
+        def __init__(self, data_list):
+            self.data = data_list
+        def __len__(self):
+            return len(self.data)
+        def __getitem__(self, idx):
+            return self.data[idx]
+
+    train_dataset = DPODictDataset(train_dataset_list)
+    val_dataset = DPODictDataset(val_dataset_list)
+
     logging.info(f"Dataset split: {len(train_dataset)} train, {len(val_dataset)} validation examples.")
 
     # --- Data Loaders --- #
     # Simple collator: The DataLoader returns a list of dicts, we process individually
-    train_loader = DataLoader(train_dataset, batch_size=config.train_batch_size, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=config.eval_batch_size)
+    # Define a collate function to handle the list of dicts from DPODictDataset
+    def dpo_collate_fn(batch_list):
+        # batch_list is a list of dicts like {"prompt": ..., "chosen": ..., "rejected": ...}
+        # We want to return a single dictionary where each key maps to a list of the corresponding values
+        keys = batch_list[0].keys()
+        collated_batch = {key: [item[key] for item in batch_list] for key in keys}
+        return collated_batch
+
+    train_loader = DataLoader(train_dataset, batch_size=config.train_batch_size, shuffle=True, collate_fn=dpo_collate_fn)
+    val_loader = DataLoader(val_dataset, batch_size=config.eval_batch_size, collate_fn=dpo_collate_fn)
 
     # --- Optimizer --- #
     optimizer = get_optimizer(model, config)
@@ -286,15 +296,15 @@ def main(config: DPOConfig):
                 chosen = batch["chosen"][i]
                 rejected = batch["rejected"][i]
 
-                # Calculate loss for one instance
-                loss = compute_per_instance_dpo_loss(
-                    lm=model,
-                    lm_ref=model_ref,
+                # Calculate loss for one instance using the correct dpo_loss function
+                loss = dpo_loss(
+                    policy_model=model,
+                    reference_model=model_ref,
                     tokenizer=tokenizer,
                     beta=config.beta,
                     prompt=prompt,
-                    response_chosen=chosen,
-                    response_rejected=rejected,
+                    chosen_response=chosen,
+                    rejected_response=rejected,
                 )
 
                 # Normalize loss for accumulation and average calculation
