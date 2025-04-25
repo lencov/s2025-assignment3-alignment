@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 from transformers import PreTrainedTokenizerBase, PreTrainedModel
-from typing import Tuple
+from typing import Tuple, List, Dict
 import os
 import json
 import random
