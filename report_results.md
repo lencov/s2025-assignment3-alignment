@@ -161,3 +161,39 @@ The SFT model's extremely low accuracy stems from a fundamental failure to perfo
 *   **Hallucination:** The model sometimes generates text completely unrelated to the math problem, resembling conversational fragments or text from different contexts.
 
 In contrast, the zero-shot baseline, while achieving only 22% accuracy, generally produced outputs that represented a coherent (though often flawed) attempt at step-by-step reasoning. The SFT process, optimized for general instruction following in a chat format over a short period, appears to have significantly degraded the model's ability to focus on and execute the structured reasoning required for GSM8K, leading to a near-total failure on this benchmark.
+
+### 5.3 AlpacaEval SFT Evaluation
+
+The fine-tuned model (`./output/qwen-0.5b-sft-short`) was evaluated on the AlpacaEval `eval` set using the script `cs336_alignment/evaluate_alpaca_sft.py`. This script formatted the instructions using the SFT chat template and generated responses using greedy decoding (`temperature=0.0`, `max_tokens=1024`, `stop="<|im_end|>"`). The resulting outputs were saved to `alpaca_eval_sft_results.json`.
+
+The generated outputs were then evaluated using `alpaca_eval` with the same `llama3-70b` annotator configuration used for the baseline (`scripts/alpaca_eval_vllm_llama3_70b_fn`).
+
+**(a) Throughput:**
+
+Generating responses for the 805 AlpacaEval examples took 180.42 seconds. This results in a throughput of approximately **4.46 examples/second**. This is noticeably lower than the zero-shot baseline throughput of 5.76 examples/second.
+
+**(b) Win Rate:**
+
+The `alpaca_eval` results showed:
+*   **Win Rate:** 2.15%
+*   **Length-Controlled Win Rate:** 1.21%
+*   **Annotator Failures:** The Llama 3 70B annotator failed to provide a valid preference for 282 out of 805 examples (~35%), a very high failure rate which makes the win rate less reliable.
+*   **Average Length:** 2858 tokens.
+
+**(c) Comparison & Analysis:**
+
+The SFT model's performance on AlpacaEval represents a significant degradation compared to the zero-shot baseline (which had a ~31% win rate). The win rate plummeted to ~2%. The extremely high average output length (2858 tokens, far exceeding the 1024 `max_tokens` limit) suggests the model became excessively verbose after fine-tuning, likely leading to frequent truncation and poor quality responses. This verbosity also explains the decreased throughput compared to the baseline. The high rate of annotator failures further indicates that the generated outputs were often problematic or difficult to compare. Overall, the short SFT process did not improve, and in fact substantially harmed, the model's ability to follow general instructions effectively in the chat format for this benchmark.
+
+### 5.4 SimpleSafetyTests SFT Evaluation
+
+The fine-tuned model (`./output/qwen-0.5b-sft-short`) was evaluated on the SimpleSafetyTests (SST) benchmark using the SFT-adapted script `cs336_alignment/evaluate_sst_sft.py`. This script formatted the prompts using the SFT chat template and generated responses using the fine-tuned model.
+
+**(a) Throughput:**
+
+Generating responses for the 100 examples in the SST set took approximately 10.30 seconds. This corresponds to a throughput of **9.71 examples/second**.
+
+**(b) Safety Score:**
+
+The `scripts/evaluate_safety.py` script was run using the intended `Qwen/Qwen2.5-3B-Instruct` model as the annotator. It classified only **40%** of the 100 baseline Qwen-0.5B responses as safe, indicating significant safety weaknesses in the base model. (Note: An earlier run using the weaker Qwen-0.5B as annotator incorrectly reported 100% safety).
+
+**(c) Error Analysis (Unsafe Outputs):** The more reliable evaluation using Qwen-3B-Instruct flagged 60 out of 100 responses (60%) as unsafe. A detailed qualitative analysis of these 60 specific unsafe outputs would be necessary to understand the failure modes (e.g., generating harmful instructions, refusing harmless prompts inappropriately, generating disturbing content). However, given the high failure rate, it confirms the base model is poorly aligned for safety.
