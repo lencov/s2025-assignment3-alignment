@@ -132,7 +132,7 @@ if __name__ == "__main__":
                         help="Path to the fine-tuned SFT model directory.")
     parser.add_argument("--dataset_path", type=str, default="data/simple_safety_tests.csv",
                         help="Path to the SimpleSafetyTests CSV file.")
-    parser.add_argument("--instruction_key", type=str, default="prompt",
+    parser.add_argument("--instruction_key", type=str, default="prompts_final", # Changed default from "prompt"
                         help="Column name in the CSV file that contains the instruction/prompt.")
     # Removed system_prompt_file argument
     parser.add_argument("--output_file", type=str, default="sst_sft_results.jsonl", # Updated default
