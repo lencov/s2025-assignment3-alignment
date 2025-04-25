@@ -91,9 +91,9 @@ def compute_per_instance_dpo_loss(
     chosen_sequence_str = format_alpaca(prompt, response_chosen) + tokenizer.eos_token
     rejected_sequence_str = format_alpaca(prompt, response_rejected) + tokenizer.eos_token
 
-    # Tokenize prompt separately to get its length
-    prompt_tokens = tokenizer(prompt, return_tensors="pt", padding=False, truncation=False)
-    prompt_length = prompt_tokens.input_ids.shape[1] # Get the length of prompt tokens
+    # Tokenize prompt separately to get its length - REMOVED based on hint
+    # prompt_tokens = tokenizer(prompt, return_tensors="pt", padding=False, truncation=False)
+    # prompt_length = prompt_tokens.input_ids.shape[1]
 
     # 2. Tokenize the full sequences
     tokenized_sequences = tokenizer(
@@ -107,14 +107,11 @@ def compute_per_instance_dpo_loss(
     input_ids = tokenized_sequences.input_ids
     attention_mask = tokenized_sequences.attention_mask
 
-    # 3. Create labels, masking out prompt tokens and padding
+    # 3. Create labels, masking out ONLY padding tokens (following the hint)
     labels = input_ids.clone()
-    # Mask padding tokens
     if tokenizer.pad_token_id is not None:
         labels[labels == tokenizer.pad_token_id] = -100
-    # Mask prompt tokens - IMPORTANT: Apply mask to the first `prompt_length` tokens
-    # Note: The loss calculation implicitly shifts labels, so we mask up to `prompt_length - 1` index in the original label tensor.
-    labels[:, :prompt_length] = -100 # Mask prompt tokens
+    # REMOVED prompt masking: labels[:, :prompt_length] = -100
 
     # 4. Ensure tensors are on the correct devices
     lm_device = next(lm.parameters()).device
@@ -122,24 +119,23 @@ def compute_per_instance_dpo_loss(
 
     input_ids_lm = input_ids.to(lm_device)
     attention_mask_lm = attention_mask.to(lm_device)
-    labels_lm = labels.to(lm_device) # Labels now have prompt masked out
+    labels_lm = labels.to(lm_device) # Use labels without prompt masking
 
     input_ids_ref = input_ids.to(ref_device)
     attention_mask_ref = attention_mask.to(ref_device)
-    labels_ref = labels.to(ref_device) # Pass the same masked labels
+    labels_ref = labels.to(ref_device) # Use labels without prompt masking
 
-    # 5. Compute sequence log probabilities (now effectively only for response tokens)
+    # 5. Compute sequence log probabilities for the FULL sequence
     log_probs_lm = get_sequence_log_probs(lm, input_ids_lm, labels_lm, attention_mask_lm)
     log_probs_ref = get_sequence_log_probs(lm_ref, input_ids_ref, labels_ref, attention_mask_ref)
 
     # Separate chosen and rejected log probabilities
-    # Ensure ref log probs are moved to the main model's device for comparison
     log_probs_lm_chosen = log_probs_lm[0]
     log_probs_lm_rejected = log_probs_lm[1]
     log_probs_ref_chosen = log_probs_ref[0].to(lm_device)
     log_probs_ref_rejected = log_probs_ref[1].to(lm_device)
 
-    # 6. Calculate log-prob differences for response tokens
+    # 6. Calculate log-prob differences (prompt part cancels out)
     pi_log_prob_diff = log_probs_lm_chosen - log_probs_lm_rejected
     ref_log_prob_diff = log_probs_ref_chosen - log_probs_ref_rejected
 
