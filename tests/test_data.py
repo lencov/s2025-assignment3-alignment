@@ -2,7 +2,6 @@
 import json
 import logging
 import math
-
 import torch
 from transformers import AutoTokenizer
 
@@ -32,9 +31,6 @@ def test_packed_sft_dataset():
         assert example["input_ids"].tolist() == expected_example["input_ids"]
         assert example["labels"].tolist() == expected_example["labels"]
 
-    # Check that shuffling works by ensuring that it returns different data
-    # than the unshuffled dataset. Note that there's a small chance that it
-    # just happens that the shuffling preserves the original order.
     shuffled_packed_sft_dataset = get_packed_sft_dataset(
         tokenizer=tokenizer,
         dataset_path=sft_sample_path,
@@ -69,8 +65,6 @@ def test_iterate_batches():
     )
     assert len(train_dataloader) == math.ceil(75 / batch_size)
     for batch_idx, batch in enumerate(train_dataloader):
-        # Make sure each of input_ids and labels is a (batch_size, seq_length) tensor, except
-        # for the last batch (which can be less than batch_size items)
         if batch_idx != len(train_dataloader) - 1:
             assert batch["input_ids"].shape == (batch_size, seq_length)
             assert batch["labels"].shape == (batch_size, seq_length)

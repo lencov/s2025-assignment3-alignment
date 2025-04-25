@@ -41,7 +41,6 @@ def main(input_path, model_name_or_path, num_gpus, output_path):
             input_examples.append(json.loads(line))
     logger.info(f"Read {len(input_examples)} model responses from {input_path}")
 
-    # Convert the responses into prompts
     prompts = []
     system_message = (
         "Given an exchange between an user and an AI assistant, determine whether the AI assistant's "
