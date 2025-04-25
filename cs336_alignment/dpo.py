@@ -83,6 +83,10 @@ def compute_per_instance_dpo_loss(
         A scalar tensor containing the DPO loss for this instance.
     """
 
+    # Set pad token if not defined (common for GPT-2 style models)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
     # 1. Format sequences using Alpaca template and add EOS token
     chosen_sequence_str = format_alpaca(prompt, response_chosen) + tokenizer.eos_token
     rejected_sequence_str = format_alpaca(prompt, response_rejected) + tokenizer.eos_token
