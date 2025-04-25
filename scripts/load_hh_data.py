@@ -13,11 +13,12 @@ DEFAULT_DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'
 
 # Map the actual downloaded filenames to their conceptual source
 # Assuming the download order corresponds to: harmless-base, helpful-base, helpful-online, helpful-rejection-sampled
+# UPDATE: Using user-provided unzipped filenames
 DOWNLOADED_FILES_MAP = {
-    "train.jsonl.gz": "harmless-base",
-    "train.jsonl.gz.1": "helpful-base",
-    "train.jsonl.gz.2": "helpful-online",
-    "train.jsonl.gz.3": "helpful-rejection-sampled",
+    "train.jsonl": "harmless-base",
+    "train1.jsonl": "helpful-base",
+    "train2.jsonl": "helpful-online",
+    "train3.jsonl": "helpful-rejection-sampled",
 }
 
 # --- Helper Functions ---
@@ -83,8 +84,9 @@ def load_processed_hh_dataset(data_dir=DEFAULT_DATA_DIR, file_map=DOWNLOADED_FIL
         skipped_multi_turn = 0
         skipped_parsing_error = 0
         try:
-            # Open the gzipped file for reading text
-            with gzip.open(file_path, 'rt', encoding='utf-8') as f:
+            # Open the UNZIPPED file for reading text
+            # with gzip.open(file_path, 'rt', encoding='utf-8') as f: # Ensure gzip.open is commented out/removed
+            with open(file_path, 'r', encoding='utf-8') as f:
                 # Iterate line by line (each line is a JSON object)
                 for line in tqdm(f, desc=f"Processing {filename}"):
                     # Optional: Limit examples per file for faster testing/debugging
