@@ -95,8 +95,8 @@ def evaluate(model: PreTrainedModel, model_ref: PreTrainedModel, tokenizer: PreT
         batch_pi_log_probs_rejected = []
 
         # Process each item individually
-        for i in range(len(batch["instruction"])):
-            prompt = batch["instruction"][i]
+        for i in range(len(batch["prompt"])):
+            prompt = batch["prompt"][i]
             chosen = batch["chosen"][i]
             rejected = batch["rejected"][i]
 
@@ -288,11 +288,11 @@ def main(config: DPOConfig):
                 break
 
             # --- Process Micro-Batch --- #
-            actual_batch_size = len(batch["instruction"])
+            actual_batch_size = len(batch["prompt"])
             micro_batch_loss_sum = 0.0
 
             for i in range(actual_batch_size):
-                prompt = batch["instruction"][i]
+                prompt = batch["prompt"][i]
                 chosen = batch["chosen"][i]
                 rejected = batch["rejected"][i]
 
